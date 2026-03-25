@@ -1,13 +1,13 @@
-package com.example;
+package com.dan.gimtracker;
 
 import net.runelite.client.RuneLite;
 import net.runelite.client.externalplugins.ExternalPluginManager;
 
-public class ExamplePluginTest
+public class GIMTrackerPluginLauncher
 {
 	public static void main(String[] args) throws Exception
 	{
-		ExternalPluginManager.loadBuiltin(ExamplePlugin.class);
+		ExternalPluginManager.loadBuiltin(GIMTrackerPlugin.class);
 		RuneLite.main(args);
 	}
 }

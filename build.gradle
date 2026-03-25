@@ -14,7 +14,8 @@ repositories {
 }
 
 def runeLiteVersion = 'latest.release'
-def pluginMainClass = 'com.example.ExamplePluginTest'
+def pluginMainClass = 'com.dan.gimtracker.GIMTrackerPluginLauncher'
+def mockBackendMainClass = 'com.dan.gimtracker.mock.MockProgressBackend'
 
 dependencies {
 	compileOnly group: 'net.runelite', name:'client', version: runeLiteVersion
@@ -27,7 +28,7 @@ dependencies {
 	testImplementation group: 'net.runelite', name:'jshell', version: runeLiteVersion
 }
 
-group = 'com.example'
+group = 'com.dan.gimtracker'
 version = '1.0-SNAPSHOT'
 
 tasks.withType(JavaCompile).configureEach {
@@ -41,6 +42,13 @@ tasks.register('run', JavaExec) {
 
 	jvmArgs "-ea"
 	args "--developer-mode", "--debug"
+}
+
+tasks.register('runMockBackend', JavaExec) {
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = mockBackendMainClass
+
+	jvmArgs "-ea"
 }
 
 tasks.register('shadowJar', Jar) {
