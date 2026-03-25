@@ -40,6 +40,17 @@ public interface GIMTrackerConfig extends Config
 		return 30;
 	}
 
+	// Sets the minimum boss KC/completion count before those events are queued for syncing.
+	@ConfigItem(
+		keyName = "bossKillCountThreshold",
+		name = "Boss KC Threshold",
+		description = "Only queue boss kill count or completion count events at or above this value"
+	)
+	default int bossKillCountThreshold()
+	{
+		return 5;
+	}
+
 	// Exposes temporary testing controls so tracked events can be validated without gameplay.
 	@ConfigItem(
 		keyName = "developerMode",

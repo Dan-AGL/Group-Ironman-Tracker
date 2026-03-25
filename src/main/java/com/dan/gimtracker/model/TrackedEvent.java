@@ -43,6 +43,22 @@ public class TrackedEvent
 		return levelUp("ATTACK", 98, 99);
 	}
 
+	// Creates a boss KC or raid completion event once a tracked count crosses the configured threshold.
+	public static TrackedEvent bossKillCount(String bossName, String countType, int count)
+	{
+		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("bossName", bossName);
+		details.put("countType", countType);
+		details.put("count", count);
+
+		return new TrackedEvent(
+			"BOSS_KC",
+			Instant.now().toString(),
+			bossName + " " + countType.toLowerCase().replace('_', ' ') + ": " + count,
+			details
+		);
+	}
+
 	// Returns the event category used by the backend and future filtering.
 	public String getType()
 	{

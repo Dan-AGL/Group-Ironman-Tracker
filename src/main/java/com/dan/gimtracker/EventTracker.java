@@ -5,6 +5,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import net.runelite.api.Client;
@@ -16,6 +17,7 @@ public class EventTracker
 	private static final int MAX_RECENT_EVENTS = 5;
 
 	private final Map<Skill, Integer> lastKnownLevels = new EnumMap<>(Skill.class);
+	private final Map<String, Integer> lastReportedBossCounts = new HashMap<>();
 	private final List<TrackedEvent> pendingEvents = new ArrayList<>();
 	private final Deque<TrackedEvent> recentEvents = new ArrayDeque<>();
 
@@ -23,6 +25,12 @@ public class EventTracker
 	public void resetLevelBaseline()
 	{
 		lastKnownLevels.clear();
+	}
+
+	// Clears remembered boss counts so a fresh session can establish its own event baseline.
+	public void resetBossCountBaseline()
+	{
+		lastReportedBossCounts.clear();
 	}
 
 	// Converts a RuneLite stat change into one or more queued level-up events when the real level increases.
@@ -48,6 +56,26 @@ public class EventTracker
 		}
 
 		TrackedEvent trackedEvent = TrackedEvent.levelUp(skill.name(), previousLevel, currentLevel);
+		queueEvent(trackedEvent);
+		return List.of(trackedEvent);
+	}
+
+	// Queues boss KC events once they pass the configured threshold and the count has advanced.
+	public List<TrackedEvent> captureBossKillCountEvent(String bossName, String countType, int count, int threshold)
+	{
+		if (count < threshold)
+		{
+			return List.of();
+		}
+
+		String bossKey = bossName + "|" + countType;
+		Integer previousCount = lastReportedBossCounts.put(bossKey, count);
+		if (previousCount != null && count <= previousCount)
+		{
+			return List.of();
+		}
+
+		TrackedEvent trackedEvent = TrackedEvent.bossKillCount(bossName, countType, count);
 		queueEvent(trackedEvent);
 		return List.of(trackedEvent);
 	}

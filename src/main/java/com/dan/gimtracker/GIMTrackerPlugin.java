@@ -13,11 +13,15 @@ import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Player;
+import net.runelite.api.ChatMessageType;
+import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.StatChanged;
@@ -27,6 +31,7 @@ import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
+import net.runelite.client.util.Text;
 
 @Slf4j
 @PluginDescriptor(
@@ -35,6 +40,9 @@ import net.runelite.client.ui.NavigationButton;
 public class GIMTrackerPlugin extends Plugin
 {
 	private static final Duration MIN_SYNC_INTERVAL = Duration.ofSeconds(5);
+	private static final Pattern BOSS_COUNT_MESSAGE = Pattern.compile(
+		"Your (.+?) (kill count|completion count) is:? ([\\d,]+)\\.?$"
+	);
 
 	@Inject
 	private Client client;
@@ -71,6 +79,7 @@ public class GIMTrackerPlugin extends Plugin
 		if (client.getGameState() == GameState.LOGGED_IN)
 		{
 			eventTracker.resetLevelBaseline();
+			eventTracker.resetBossCountBaseline();
 		}
 	}
 
@@ -91,12 +100,14 @@ public class GIMTrackerPlugin extends Plugin
 		if (gameStateChanged.getGameState() == GameState.LOGGED_IN)
 		{
 			eventTracker.resetLevelBaseline();
+			eventTracker.resetBossCountBaseline();
 			progressPanel.updateStatus("Tracking level-ups");
 			refreshPanel();
 		}
 		else if (gameStateChanged.getGameState() == GameState.LOGIN_SCREEN)
 		{
 			eventTracker.resetLevelBaseline();
+			eventTracker.resetBossCountBaseline();
 			flushPendingEvents("logout");
 			progressPanel.updateStatus("Waiting for login");
 			refreshPanel();
@@ -116,6 +127,40 @@ public class GIMTrackerPlugin extends Plugin
 		if (!newEvents.isEmpty())
 		{
 			log.debug("Captured {} new tracked events", newEvents.size());
+			refreshPanel();
+		}
+	}
+
+	// Parses boss KC and raid completion chat messages into queued events once they clear the configured threshold.
+	@Subscribe
+	public void onChatMessage(ChatMessage event)
+	{
+		if (client.getGameState() != GameState.LOGGED_IN || event.getType() != ChatMessageType.GAMEMESSAGE)
+		{
+			return;
+		}
+
+		String message = Text.removeTags(event.getMessage()).trim();
+		Matcher matcher = BOSS_COUNT_MESSAGE.matcher(message);
+		if (!matcher.matches())
+		{
+			return;
+		}
+
+		String bossName = matcher.group(1);
+		String countType = matcher.group(2).equals("completion count") ? "COMPLETION_COUNT" : "KILL_COUNT";
+		int count = Integer.parseInt(matcher.group(3).replace(",", ""));
+		List<TrackedEvent> newEvents = eventTracker.captureBossKillCountEvent(
+			bossName,
+			countType,
+			count,
+			config.bossKillCountThreshold()
+		);
+
+		if (!newEvents.isEmpty())
+		{
+			log.debug("Captured {} boss KC events", newEvents.size());
+			progressPanel.updateStatus("Captured boss KC for " + bossName);
 			refreshPanel();
 		}
 	}
