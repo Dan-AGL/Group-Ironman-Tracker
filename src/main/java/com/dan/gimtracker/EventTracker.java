@@ -3,11 +3,13 @@ package com.dan.gimtracker;
 import com.dan.gimtracker.model.TrackedEvent;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Deque;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import net.runelite.api.Client;
 import net.runelite.api.Skill;
 import net.runelite.api.events.StatChanged;
@@ -18,6 +20,7 @@ public class EventTracker
 
 	private final Map<Skill, Integer> lastKnownLevels = new EnumMap<>(Skill.class);
 	private final Map<String, Integer> lastReportedBossCounts = new HashMap<>();
+	private final Set<String> completedCombatTasks = new HashSet<>();
 	private final List<TrackedEvent> pendingEvents = new ArrayList<>();
 	private final Deque<TrackedEvent> recentEvents = new ArrayDeque<>();
 
@@ -31,6 +34,12 @@ public class EventTracker
 	public void resetBossCountBaseline()
 	{
 		lastReportedBossCounts.clear();
+	}
+
+	// Clears remembered combat tasks so a fresh session can establish which completions are new.
+	public void resetCombatTaskBaseline()
+	{
+		completedCombatTasks.clear();
 	}
 
 	// Converts a RuneLite stat change into one or more queued level-up events when the real level increases.
@@ -89,6 +98,20 @@ public class EventTracker
 		}
 
 		TrackedEvent trackedEvent = TrackedEvent.bossDrop(bossName, itemName, value, sourceChannel);
+		queueEvent(trackedEvent);
+		return List.of(trackedEvent);
+	}
+
+	// Queues a combat task completion the first time that task is observed in the current session.
+	public List<TrackedEvent> captureCombatTaskEvent(String taskName, String tier, String sourceChannel)
+	{
+		String normalizedTask = taskName.trim();
+		if (!completedCombatTasks.add(normalizedTask))
+		{
+			return List.of();
+		}
+
+		TrackedEvent trackedEvent = TrackedEvent.combatTaskComplete(normalizedTask, tier, sourceChannel);
 		queueEvent(trackedEvent);
 		return List.of(trackedEvent);
 	}

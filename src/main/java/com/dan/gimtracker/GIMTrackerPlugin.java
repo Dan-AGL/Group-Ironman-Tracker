@@ -46,6 +46,14 @@ public class GIMTrackerPlugin extends Plugin
 	private static final Pattern BOSS_DROP_MESSAGE = Pattern.compile(
 		"(?:.+? received a drop: |Drop: )(.+?) \\(([\\d,]+) coins\\) from (.+?)\\.?$"
 	);
+	private static final Pattern COMBAT_TASK_MESSAGE = Pattern.compile(
+		"(?:Congratulations,? )?(?:you've|you have) completed (?:a |the )?(?:(easy|medium|hard|elite|master|grandmaster) combat task|combat achievement task):? (.+?)(?: \\((\\d+) points?\\))?\\.?$",
+		Pattern.CASE_INSENSITIVE
+	);
+	private static final Pattern COMBAT_TASK_QUOTED_MESSAGE = Pattern.compile(
+		"Congratulations!? (?:you've|you have) completed (?:an? )?(easy|medium|hard|elite|master|grandmaster) combat achievement '?(.+?)'?(?: \\((\\d+) points?\\))?\\.?$",
+		Pattern.CASE_INSENSITIVE
+	);
 
 	@Inject
 	private Client client;
@@ -69,7 +77,12 @@ public class GIMTrackerPlugin extends Plugin
 	protected void startUp() throws Exception
 	{
 		log.debug("Group Ironman Tracker started");
-		progressPanel = new ProgressPanel(this::requestManualSync, this::addTestLevelUpEvent, config.developerMode());
+		progressPanel = new ProgressPanel(
+			this::requestManualSync,
+			this::addTestLevelUpEvent,
+			this::addTestCombatTaskEvent,
+			config.developerMode()
+		);
 		navigationButton = NavigationButton.builder()
 			.tooltip("Group Ironman Tracker")
 			.icon(createToolbarIcon())
@@ -83,6 +96,7 @@ public class GIMTrackerPlugin extends Plugin
 		{
 			eventTracker.resetLevelBaseline();
 			eventTracker.resetBossCountBaseline();
+			eventTracker.resetCombatTaskBaseline();
 		}
 	}
 
@@ -104,6 +118,7 @@ public class GIMTrackerPlugin extends Plugin
 		{
 			eventTracker.resetLevelBaseline();
 			eventTracker.resetBossCountBaseline();
+			eventTracker.resetCombatTaskBaseline();
 			progressPanel.updateStatus("Tracking level-ups");
 			refreshPanel();
 		}
@@ -111,6 +126,7 @@ public class GIMTrackerPlugin extends Plugin
 		{
 			eventTracker.resetLevelBaseline();
 			eventTracker.resetBossCountBaseline();
+			eventTracker.resetCombatTaskBaseline();
 			flushPendingEvents("logout");
 			progressPanel.updateStatus("Waiting for login");
 			refreshPanel();
@@ -154,9 +170,19 @@ public class GIMTrackerPlugin extends Plugin
 			return;
 		}
 
+		if (tryCaptureCombatTaskEvent(message, event.getType()))
+		{
+			return;
+		}
+
 		if (config.developerMode() && message.toLowerCase().contains("drop"))
 		{
 			log.debug("Unmatched drop chat [{}]: {}", event.getType(), message);
+		}
+
+		if (config.developerMode() && message.toLowerCase().contains("combat achievement"))
+		{
+			log.debug("Unmatched combat task chat [{}]: {}", event.getType(), message);
 		}
 	}
 
@@ -219,6 +245,46 @@ public class GIMTrackerPlugin extends Plugin
 		return !newEvents.isEmpty();
 	}
 
+	// Extracts combat task completions from chat messages and de-duplicates them within the session.
+	private boolean tryCaptureCombatTaskEvent(String message, ChatMessageType messageType)
+	{
+		String taskName;
+		String tier;
+
+		Matcher directMatcher = COMBAT_TASK_MESSAGE.matcher(message);
+		if (directMatcher.matches())
+		{
+			tier = directMatcher.group(1) == null ? "" : directMatcher.group(1).toUpperCase();
+			taskName = directMatcher.group(2);
+		}
+		else
+		{
+			Matcher quotedMatcher = COMBAT_TASK_QUOTED_MESSAGE.matcher(message);
+			if (!quotedMatcher.matches())
+			{
+				return false;
+			}
+
+			tier = quotedMatcher.group(1).toUpperCase();
+			taskName = quotedMatcher.group(2);
+		}
+
+		List<TrackedEvent> newEvents = eventTracker.captureCombatTaskEvent(
+			taskName,
+			tier,
+			messageType.name()
+		);
+
+		if (!newEvents.isEmpty())
+		{
+			log.debug("Captured {} combat task events", newEvents.size());
+			progressPanel.updateStatus("Captured combat task completion");
+			refreshPanel();
+		}
+
+		return !newEvents.isEmpty();
+	}
+
 	// Periodically flushes queued events instead of sending one request per RuneLite event.
 	@Subscribe
 	public void onGameTick(GameTick event)
@@ -253,6 +319,14 @@ public class GIMTrackerPlugin extends Plugin
 	{
 		eventTracker.addTestEvent(TrackedEvent.testLevelUp());
 		progressPanel.updateStatus("Queued test level-up");
+		refreshPanel();
+	}
+
+	// Injects a synthetic combat task event so the pipeline can be tested without spending a real completion.
+	private void addTestCombatTaskEvent()
+	{
+		eventTracker.addTestEvent(TrackedEvent.testCombatTask());
+		progressPanel.updateStatus("Queued test combat task");
 		refreshPanel();
 	}
 

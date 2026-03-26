@@ -76,6 +76,32 @@ public class TrackedEvent
 		);
 	}
 
+	// Creates a combat task completion event with the task name and optional tier.
+	public static TrackedEvent combatTaskComplete(String taskName, String tier, String sourceChannel)
+	{
+		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("taskName", taskName);
+		details.put("tier", tier);
+		details.put("sourceChannel", sourceChannel);
+
+		String summary = tier == null || tier.isBlank()
+			? "Combat task completed: " + taskName
+			: tier + " combat task completed: " + taskName;
+
+		return new TrackedEvent(
+			"COMBAT_TASK_COMPLETE",
+			Instant.now().toString(),
+			summary,
+			details
+		);
+	}
+
+	// Creates a fake combat task completion event for developer testing.
+	public static TrackedEvent testCombatTask()
+	{
+		return combatTaskComplete("Perfect Brutus", "MEDIUM", "DEVELOPER_MODE");
+	}
+
 	// Returns the event category used by the backend and future filtering.
 	public String getType()
 	{
