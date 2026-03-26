@@ -16,7 +16,6 @@ import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
-import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Player;
@@ -32,13 +31,15 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.util.Text;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-@Slf4j
 @PluginDescriptor(
 	name = "Group Ironman Tracker"
 )
 public class GIMTrackerPlugin extends Plugin
 {
+	private static final Logger log = LoggerFactory.getLogger(GIMTrackerPlugin.class);
 	private static final Duration MIN_SYNC_INTERVAL = Duration.ofSeconds(5);
 	private static final Pattern BOSS_COUNT_MESSAGE = Pattern.compile(
 		"Your (.+?) (kill count|completion count) is:? ([\\d,]+)\\.?$"
@@ -82,10 +83,6 @@ public class GIMTrackerPlugin extends Plugin
 	{
 		log.debug("Group Ironman Tracker started");
 		progressPanel = new ProgressPanel(
-			this::requestManualSync,
-			this::addTestLevelUpEvent,
-			this::addTestCombatTaskEvent,
-			this::addTestCollectionLogEvent,
 			config.developerMode()
 		);
 		navigationButton = NavigationButton.builder()
@@ -216,7 +213,10 @@ public class GIMTrackerPlugin extends Plugin
 		String bossName = matcher.group(1);
 		String countType = matcher.group(2).equals("completion count") ? "COMPLETION_COUNT" : "KILL_COUNT";
 		int count = Integer.parseInt(matcher.group(3).replace(",", ""));
+		Player localPlayer = client.getLocalPlayer();
+		String playerName = localPlayer == null ? "Unknown" : localPlayer.getName();
 		List<TrackedEvent> newEvents = eventTracker.captureBossKillCountEvent(
+			playerName,
 			bossName,
 			countType,
 			count,
@@ -245,10 +245,13 @@ public class GIMTrackerPlugin extends Plugin
 		String itemName = matcher.group(1);
 		long value = Long.parseLong(matcher.group(2).replace(",", ""));
 		String bossName = matcher.group(3);
+		Player localPlayer = client.getLocalPlayer();
+		String playerName = localPlayer == null ? "Unknown" : localPlayer.getName();
 		List<TrackedEvent> newEvents = eventTracker.captureBossDropEvent(
 			bossName,
 			itemName,
 			value,
+			playerName,
 			messageType.name(),
 			config.dropValueThreshold()
 		);
@@ -268,6 +271,8 @@ public class GIMTrackerPlugin extends Plugin
 	{
 		String taskName;
 		String tier;
+		Player localPlayer = client.getLocalPlayer();
+		String playerName = localPlayer == null ? "Unknown" : localPlayer.getName();
 
 		Matcher directMatcher = COMBAT_TASK_MESSAGE.matcher(message);
 		if (directMatcher.matches())
@@ -288,6 +293,7 @@ public class GIMTrackerPlugin extends Plugin
 		}
 
 		List<TrackedEvent> newEvents = eventTracker.captureCombatTaskEvent(
+			playerName,
 			taskName,
 			tier,
 			messageType.name()
@@ -355,36 +361,6 @@ public class GIMTrackerPlugin extends Plugin
 	GIMTrackerConfig provideConfig(ConfigManager configManager)
 	{
 		return configManager.getConfig(GIMTrackerConfig.class);
-	}
-
-	// Handles the panel button by routing it through the standard sync path.
-	private void requestManualSync()
-	{
-		flushPendingEvents("manual");
-	}
-
-	// Injects a synthetic level-up event so the pipeline can be tested on high-level accounts.
-	private void addTestLevelUpEvent()
-	{
-		eventTracker.addTestEvent(TrackedEvent.testLevelUp());
-		progressPanel.updateStatus("Queued test level-up");
-		refreshPanel();
-	}
-
-	// Injects a synthetic combat task event so the pipeline can be tested without spending a real completion.
-	private void addTestCombatTaskEvent()
-	{
-		eventTracker.addTestEvent(TrackedEvent.testCombatTask());
-		progressPanel.updateStatus("Queued test combat task");
-		refreshPanel();
-	}
-
-	// Injects a synthetic collection-log event so the pipeline can be tested without a real unlock.
-	private void addTestCollectionLogEvent()
-	{
-		eventTracker.addTestEvent(TrackedEvent.testCollectionLog());
-		progressPanel.updateStatus("Queued test collection log");
-		refreshPanel();
 	}
 
 	// Moves queued events into an upload request and sends them off-thread so the client stays responsive.

@@ -7,6 +7,7 @@ import java.util.HashSet;
 import java.util.Deque;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -20,6 +21,7 @@ public class EventTracker
 
 	private final Map<Skill, Integer> lastKnownLevels = new EnumMap<>(Skill.class);
 	private final Map<String, Integer> lastReportedBossCounts = new HashMap<>();
+	private final Map<String, Integer> sessionBossCounts = new HashMap<>();
 	private final Set<String> completedCombatTasks = new HashSet<>();
 	private final Set<String> unlockedCollectionLogEntries = new HashSet<>();
 	private final List<TrackedEvent> pendingEvents = new ArrayList<>();
@@ -35,6 +37,7 @@ public class EventTracker
 	public void resetBossCountBaseline()
 	{
 		lastReportedBossCounts.clear();
+		sessionBossCounts.clear();
 	}
 
 	// Clears remembered combat tasks so a fresh session can establish which completions are new.
@@ -71,46 +74,73 @@ public class EventTracker
 			return List.of();
 		}
 
-		TrackedEvent trackedEvent = TrackedEvent.levelUp(skill.name(), previousLevel, currentLevel);
+		String playerName = client.getLocalPlayer() == null ? "Unknown" : client.getLocalPlayer().getName();
+		TrackedEvent trackedEvent = TrackedEvent.levelUp(playerName, skill.name(), previousLevel, currentLevel);
 		queueEvent(trackedEvent);
 		return List.of(trackedEvent);
 	}
 
 	// Queues boss KC events once they pass the configured threshold and the count has advanced.
-	public List<TrackedEvent> captureBossKillCountEvent(String bossName, String countType, int count, int threshold)
+	public List<TrackedEvent> captureBossKillCountEvent(String playerName, String bossName, String countType, int count, int threshold)
 	{
-		if (count < threshold)
+		if (threshold <= 0)
 		{
 			return List.of();
 		}
 
 		String bossKey = bossName + "|" + countType;
 		Integer previousCount = lastReportedBossCounts.put(bossKey, count);
-		if (previousCount != null && count <= previousCount)
+		if (previousCount == null)
+		{
+			sessionBossCounts.put(bossKey, 1);
+			if (threshold > 1)
+			{
+				return List.of();
+			}
+		}
+		else if (count <= previousCount)
+		{
+			return List.of();
+		}
+		else
+		{
+			int increment = count - previousCount;
+			sessionBossCounts.merge(bossKey, increment, Integer::sum);
+		}
+
+		int sessionCount = sessionBossCounts.getOrDefault(bossKey, 0);
+		if (sessionCount < threshold)
 		{
 			return List.of();
 		}
 
-		TrackedEvent trackedEvent = TrackedEvent.bossKillCount(bossName, countType, count);
+		TrackedEvent trackedEvent = TrackedEvent.bossKillCount(playerName, bossName, countType, sessionCount, count);
 		queueEvent(trackedEvent);
 		return List.of(trackedEvent);
 	}
 
 	// Queues boss drop events once they pass the configured value threshold.
-	public List<TrackedEvent> captureBossDropEvent(String bossName, String itemName, long value, String sourceChannel, int threshold)
+	public List<TrackedEvent> captureBossDropEvent(
+		String bossName,
+		String itemName,
+		long value,
+		String playerName,
+		String sourceChannel,
+		int threshold
+	)
 	{
 		if (value < threshold)
 		{
 			return List.of();
 		}
 
-		TrackedEvent trackedEvent = TrackedEvent.bossDrop(bossName, itemName, value, sourceChannel);
+		TrackedEvent trackedEvent = TrackedEvent.bossDrop(bossName, itemName, value, playerName, sourceChannel);
 		queueEvent(trackedEvent);
 		return List.of(trackedEvent);
 	}
 
 	// Queues a combat task completion the first time that task is observed in the current session.
-	public List<TrackedEvent> captureCombatTaskEvent(String taskName, String tier, String sourceChannel)
+	public List<TrackedEvent> captureCombatTaskEvent(String playerName, String taskName, String tier, String sourceChannel)
 	{
 		String normalizedTask = taskName.trim();
 		if (!completedCombatTasks.add(normalizedTask))
@@ -118,7 +148,7 @@ public class EventTracker
 			return List.of();
 		}
 
-		TrackedEvent trackedEvent = TrackedEvent.combatTaskComplete(normalizedTask, tier, sourceChannel);
+		TrackedEvent trackedEvent = TrackedEvent.combatTaskComplete(playerName, normalizedTask, tier, sourceChannel);
 		queueEvent(trackedEvent);
 		return List.of(trackedEvent);
 	}
@@ -189,11 +219,45 @@ public class EventTracker
 	// Adds a new event to the pending queue and bounded recent history.
 	private void queueEvent(TrackedEvent trackedEvent)
 	{
+		if ("BOSS_KC".equals(trackedEvent.getType()))
+		{
+			removeMatchingBossKcEvent(pendingEvents, trackedEvent);
+			removeMatchingBossKcEvent(recentEvents, trackedEvent);
+		}
+
 		pendingEvents.add(trackedEvent);
 		recentEvents.addFirst(trackedEvent);
 		while (recentEvents.size() > MAX_RECENT_EVENTS)
 		{
 			recentEvents.removeLast();
 		}
+	}
+
+	private void removeMatchingBossKcEvent(Iterable<TrackedEvent> events, TrackedEvent targetEvent)
+	{
+		Iterator<TrackedEvent> iterator = events.iterator();
+		while (iterator.hasNext())
+		{
+			TrackedEvent existingEvent = iterator.next();
+			if (!"BOSS_KC".equals(existingEvent.getType()))
+			{
+				continue;
+			}
+
+			if (sameBossKcStream(existingEvent, targetEvent))
+			{
+				iterator.remove();
+				return;
+			}
+		}
+	}
+
+	private boolean sameBossKcStream(TrackedEvent first, TrackedEvent second)
+	{
+		Map<String, Object> firstDetails = first.getDetails();
+		Map<String, Object> secondDetails = second.getDetails();
+		return String.valueOf(firstDetails.get("playerName")).equals(String.valueOf(secondDetails.get("playerName")))
+			&& String.valueOf(firstDetails.get("bossName")).equals(String.valueOf(secondDetails.get("bossName")))
+			&& String.valueOf(firstDetails.get("countType")).equals(String.valueOf(secondDetails.get("countType")));
 	}
 }

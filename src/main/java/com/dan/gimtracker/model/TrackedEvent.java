@@ -21,9 +21,10 @@ public class TrackedEvent
 	}
 
 	// Creates the first real tracked event type for the plugin: a skill level increase.
-	public static TrackedEvent levelUp(String skill, int oldLevel, int newLevel)
+	public static TrackedEvent levelUp(String playerName, String skill, int oldLevel, int newLevel)
 	{
 		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("playerName", playerName);
 		details.put("skill", skill);
 		details.put("oldLevel", oldLevel);
 		details.put("newLevel", newLevel);
@@ -40,32 +41,35 @@ public class TrackedEvent
 	// Creates a fake level-up event for developer testing without needing a real level-up.
 	public static TrackedEvent testLevelUp()
 	{
-		return levelUp("ATTACK", 98, 99);
+		return levelUp("GIM LeDonj", "ATTACK", 98, 99);
 	}
 
 	// Creates a boss KC or raid completion event once a tracked count crosses the configured threshold.
-	public static TrackedEvent bossKillCount(String bossName, String countType, int count)
+	public static TrackedEvent bossKillCount(String playerName, String bossName, String countType, int sessionCount, int totalCount)
 	{
 		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("playerName", playerName);
 		details.put("bossName", bossName);
 		details.put("countType", countType);
-		details.put("count", count);
+		details.put("count", sessionCount);
+		details.put("totalCount", totalCount);
 
 		return new TrackedEvent(
 			"BOSS_KC",
 			Instant.now().toString(),
-			bossName + " " + countType.toLowerCase().replace('_', ' ') + ": " + count,
+			playerName + " " + bossName + " " + countType.toLowerCase().replace('_', ' ') + ": " + sessionCount,
 			details
 		);
 	}
 
 	// Creates a boss drop event with the item, value, and source boss extracted from chat.
-	public static TrackedEvent bossDrop(String bossName, String itemName, long value, String sourceChannel)
+	public static TrackedEvent bossDrop(String bossName, String itemName, long value, String playerName, String sourceChannel)
 	{
 		Map<String, Object> details = new LinkedHashMap<>();
 		details.put("bossName", bossName);
 		details.put("itemName", itemName);
 		details.put("value", value);
+		details.put("playerName", playerName);
 		details.put("sourceChannel", sourceChannel);
 
 		return new TrackedEvent(
@@ -77,9 +81,10 @@ public class TrackedEvent
 	}
 
 	// Creates a combat task completion event with the task name and optional tier.
-	public static TrackedEvent combatTaskComplete(String taskName, String tier, String sourceChannel)
+	public static TrackedEvent combatTaskComplete(String playerName, String taskName, String tier, String sourceChannel)
 	{
 		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("playerName", playerName);
 		details.put("taskName", taskName);
 		details.put("tier", tier);
 		details.put("sourceChannel", sourceChannel);
@@ -99,7 +104,7 @@ public class TrackedEvent
 	// Creates a fake combat task completion event for developer testing.
 	public static TrackedEvent testCombatTask()
 	{
-		return combatTaskComplete("Perfect Brutus", "MEDIUM", "DEVELOPER_MODE");
+		return combatTaskComplete("GIM LeDonj", "Perfect Brutus", "MEDIUM", "DEVELOPER_MODE");
 	}
 
 	// Creates a collection-log event when a player unlocks a new item slot.

@@ -2,115 +2,445 @@ package com.dan.gimtracker;
 
 import com.dan.gimtracker.model.TrackedEvent;
 import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.Font;
+import java.awt.Graphics2D;
 import java.awt.GridLayout;
+import java.awt.Image;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
+import javax.imageio.ImageIO;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
 import javax.swing.BorderFactory;
-import javax.swing.JButton;
+import javax.swing.ImageIcon;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.ScrollPaneConstants;
+import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
+import javax.swing.border.EmptyBorder;
 import net.runelite.client.ui.PluginPanel;
 
 public class ProgressPanel extends PluginPanel
 {
+	private static final Color PANEL_BACKGROUND = new Color(27, 31, 38);
+	private static final Color CARD_BACKGROUND = new Color(40, 46, 57);
+	private static final Color CARD_BORDER = new Color(61, 70, 86);
+	private static final Color TITLE_COLOR = new Color(233, 236, 240);
+	private static final Color BODY_COLOR = new Color(189, 196, 207);
+	private static final Color META_COLOR = new Color(146, 156, 170);
+	private static final Color BADGE_BACKGROUND = new Color(86, 124, 184);
+	private static final Color BADGE_TEXT = new Color(245, 247, 250);
+	private static final int CARD_ICON_SIZE = 26;
+	private static final int CARD_HEIGHT = 58;
 	private static final DateTimeFormatter TIME_FORMATTER =
 		DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
 
 	private final JLabel lastSyncValue = new JLabel("Never");
-	private final JLabel pendingValue = new JLabel("0");
 	private final JLabel statusValue = new JLabel("Idle");
-	private final JLabel recentValue = new JLabel("No recent events");
-	private final JButton addTestEventButton = new JButton("Add Test Level-Up");
-	private final JButton addTestCombatTaskButton = new JButton("Add Test Combat Task");
-	private final JButton addTestCollectionLogButton = new JButton("Add Test Collection Log");
-	private final JPanel actionPanel = new JPanel(new GridLayout(0, 1, 0, 6));
+	private final JPanel recentEventsContainer = new JPanel();
+	private final JPanel footerPanel = new JPanel(new GridLayout(0, 1, 0, 4));
 
-	// Builds the small Phase 2 sidebar with sync status, queue size, and optional developer test controls.
+	// Builds the small sidebar with sync status and a scrollable recent-event feed.
 	public ProgressPanel(
-		Runnable syncNowAction,
-		Runnable addTestEventAction,
-		Runnable addTestCombatTaskAction,
-		Runnable addTestCollectionLogAction,
 		boolean developerMode
 	)
 	{
 		setLayout(new BorderLayout());
+		setBackground(PANEL_BACKGROUND);
 		setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
-		JPanel summaryPanel = new JPanel(new GridLayout(0, 1, 0, 6));
-		summaryPanel.add(new JLabel("Last sync"));
-		summaryPanel.add(lastSyncValue);
-		summaryPanel.add(new JLabel("Pending changes"));
-		summaryPanel.add(pendingValue);
-		summaryPanel.add(new JLabel("Status"));
-		summaryPanel.add(statusValue);
+		recentEventsContainer.setLayout(new BoxLayout(recentEventsContainer, BoxLayout.Y_AXIS));
+		recentEventsContainer.setBackground(PANEL_BACKGROUND);
+		recentEventsContainer.setOpaque(true);
+		recentEventsContainer.setBorder(BorderFactory.createEmptyBorder(4, 0, 4, 0));
+		recentEventsContainer.add(createEmptyStateLabel());
 
-		JPanel recentPanel = new JPanel(new GridLayout(0, 1, 0, 4));
-		recentPanel.setBorder(BorderFactory.createTitledBorder("Recent events"));
-		recentPanel.add(recentValue);
+		JScrollPane recentScrollPane = new JScrollPane(recentEventsContainer);
+		recentScrollPane.setBorder(BorderFactory.createEmptyBorder());
+		recentScrollPane.getViewport().setBackground(PANEL_BACKGROUND);
+		recentScrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
+		recentScrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
 
-		JButton syncButton = new JButton("Sync Now");
-		syncButton.addActionListener(event -> syncNowAction.run());
-		addTestEventButton.addActionListener(event -> addTestEventAction.run());
-		addTestCombatTaskButton.addActionListener(event -> addTestCombatTaskAction.run());
-		addTestCollectionLogButton.addActionListener(event -> addTestCollectionLogAction.run());
+		JPanel recentPanel = new JPanel(new BorderLayout());
+		recentPanel.setBackground(PANEL_BACKGROUND);
+		recentPanel.setBorder(BorderFactory.createTitledBorder("Recent Group Activity"));
+		recentPanel.add(recentScrollPane, BorderLayout.CENTER);
 
-		actionPanel.add(syncButton);
-		actionPanel.add(addTestEventButton);
-		actionPanel.add(addTestCombatTaskButton);
-		actionPanel.add(addTestCollectionLogButton);
+		footerPanel.setBackground(PANEL_BACKGROUND);
+		styleValueLabel(statusValue);
+		styleValueLabel(lastSyncValue);
+		footerPanel.add(createHeadingLabel("Status"));
+		footerPanel.add(statusValue);
+		footerPanel.add(createHeadingLabel("Last sync"));
+		footerPanel.add(lastSyncValue);
 		setDeveloperMode(developerMode);
 
-		add(summaryPanel, BorderLayout.NORTH);
 		add(recentPanel, BorderLayout.CENTER);
-		add(actionPanel, BorderLayout.SOUTH);
+		add(footerPanel, BorderLayout.SOUTH);
 	}
 
-	// Refreshes the queue count shown in the sidebar.
+	// Retained for compatibility with the plugin refresh cycle; the queue count is no longer displayed.
 	public void updatePendingCount(int pendingCount)
 	{
-		pendingValue.setText(Integer.toString(pendingCount));
+		runOnUiThread(() -> { });
 	}
 
 	// Converts the last successful sync timestamp into a short display value.
 	public void updateLastSync(Instant lastSync)
 	{
-		lastSyncValue.setText(lastSync == null ? "Never" : TIME_FORMATTER.format(lastSync));
+		runOnUiThread(() ->
+			lastSyncValue.setText(lastSync == null ? "Never" : TIME_FORMATTER.format(lastSync))
+		);
 	}
 
 	// Surfaces the current sync state so testing failures are visible without reading logs.
 	public void updateStatus(String status)
 	{
-		statusValue.setText(status);
+		runOnUiThread(() -> statusValue.setText(status));
 	}
 
 	// Renders the latest tracked events in a compact block for quick validation during testing.
 	public void updateRecentEvents(List<TrackedEvent> events)
 	{
-		if (events.isEmpty())
+		runOnUiThread(() ->
 		{
-			recentValue.setText("No recent events");
+			recentEventsContainer.removeAll();
+			recentEventsContainer.setLayout(new GridLayout(0, 1, 0, 8));
+
+			if (events.isEmpty())
+			{
+				recentEventsContainer.setLayout(new BoxLayout(recentEventsContainer, BoxLayout.Y_AXIS));
+				recentEventsContainer.add(createEmptyStateLabel());
+				recentEventsContainer.revalidate();
+				recentEventsContainer.repaint();
+				return;
+			}
+
+			for (TrackedEvent event : events)
+			{
+				recentEventsContainer.add(createEventCard(event));
+			}
+
+			recentEventsContainer.revalidate();
+			recentEventsContainer.repaint();
+		});
+	}
+
+	// Keeps the action area consistent even though developer-mode-only test buttons were removed.
+	public void setDeveloperMode(boolean developerMode)
+	{
+		runOnUiThread(() ->
+		{
+			revalidate();
+			repaint();
+		});
+	}
+
+	private void runOnUiThread(Runnable action)
+	{
+		if (SwingUtilities.isEventDispatchThread())
+		{
+			action.run();
 			return;
 		}
 
-		StringBuilder builder = new StringBuilder("<html>");
-		for (TrackedEvent event : events)
-		{
-			builder.append(event.getSummary()).append("<br>");
-		}
-		builder.append("</html>");
-		recentValue.setText(builder.toString());
+		SwingUtilities.invokeLater(action);
 	}
 
-	// Shows or hides temporary test controls based on the current config.
-	public void setDeveloperMode(boolean developerMode)
+	private JLabel createHeadingLabel(String text)
 	{
-		addTestEventButton.setVisible(developerMode);
-		addTestCombatTaskButton.setVisible(developerMode);
-		addTestCollectionLogButton.setVisible(developerMode);
-		actionPanel.revalidate();
-		actionPanel.repaint();
+		JLabel label = new JLabel(text);
+		label.setForeground(TITLE_COLOR);
+		label.setFont(label.getFont().deriveFont(Font.BOLD, 12f));
+		return label;
+	}
+
+	private void styleValueLabel(JLabel label)
+	{
+		label.setForeground(BODY_COLOR);
+		label.setFont(label.getFont().deriveFont(Font.PLAIN, 12f));
+	}
+
+	private JLabel createEmptyStateLabel()
+	{
+		JLabel emptyState = new JLabel("No recent events");
+		emptyState.setForeground(BODY_COLOR);
+		emptyState.setAlignmentX(Component.LEFT_ALIGNMENT);
+		return emptyState;
+	}
+
+	private JPanel createEventCard(TrackedEvent event)
+	{
+		JPanel card = new JPanel(new BorderLayout(10, 0));
+		card.setBackground(CARD_BACKGROUND);
+		card.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createLineBorder(CARD_BORDER),
+			BorderFactory.createEmptyBorder(5, 8, 5, 8)
+		));
+		card.setPreferredSize(new Dimension(0, CARD_HEIGHT));
+		card.setMinimumSize(new Dimension(0, CARD_HEIGHT));
+		card.setMaximumSize(new Dimension(Integer.MAX_VALUE, CARD_HEIGHT));
+		card.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+		JLabel iconLabel = new JLabel(resolveIcon(event));
+		iconLabel.setVerticalAlignment(SwingConstants.TOP);
+		card.add(iconLabel, BorderLayout.WEST);
+
+		JPanel textPanel = new JPanel();
+		textPanel.setLayout(new BoxLayout(textPanel, BoxLayout.Y_AXIS));
+		textPanel.setBackground(CARD_BACKGROUND);
+
+		JLabel titleLabel = new JLabel(asHtml(buildTitle(event)));
+		titleLabel.setForeground(TITLE_COLOR);
+		titleLabel.setFont(titleLabel.getFont().deriveFont(Font.BOLD, 12f));
+		textPanel.add(titleLabel);
+
+		JLabel subtitleLabel = new JLabel(asHtml(buildSubtitle(event)));
+		subtitleLabel.setForeground(BODY_COLOR);
+		subtitleLabel.setFont(subtitleLabel.getFont().deriveFont(Font.PLAIN, 11f));
+		textPanel.add(subtitleLabel);
+
+		String metaText = buildMetaText(event);
+		if (metaText != null)
+		{
+			JLabel metaLabel = new JLabel(asHtml(metaText));
+			metaLabel.setForeground(META_COLOR);
+			metaLabel.setFont(metaLabel.getFont().deriveFont(Font.PLAIN, 9f));
+			textPanel.add(metaLabel);
+		}
+
+		card.add(textPanel, BorderLayout.CENTER);
+
+		String badgeText = buildBadgeText(event);
+		if (badgeText != null)
+		{
+			JPanel badgeWrapper = new JPanel();
+			badgeWrapper.setLayout(new BoxLayout(badgeWrapper, BoxLayout.Y_AXIS));
+			badgeWrapper.setBackground(CARD_BACKGROUND);
+			badgeWrapper.setBorder(new EmptyBorder(0, 4, 0, 0));
+			badgeWrapper.setOpaque(true);
+
+			JLabel badgeLabel = new JLabel(badgeText);
+			badgeLabel.setOpaque(true);
+			badgeLabel.setBackground(BADGE_BACKGROUND);
+			badgeLabel.setForeground(BADGE_TEXT);
+			badgeLabel.setHorizontalAlignment(SwingConstants.CENTER);
+			badgeLabel.setVerticalAlignment(SwingConstants.CENTER);
+			badgeLabel.setBorder(BorderFactory.createEmptyBorder(1, 4, 1, 4));
+			badgeLabel.setPreferredSize(new Dimension(26, 18));
+			badgeLabel.setMinimumSize(new Dimension(26, 18));
+			badgeLabel.setMaximumSize(new Dimension(26, 18));
+			badgeLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+			badgeLabel.setFont(badgeLabel.getFont().deriveFont(Font.BOLD, 10f));
+			badgeWrapper.add(badgeLabel);
+			badgeWrapper.add(Box.createVerticalGlue());
+			card.add(badgeWrapper, BorderLayout.EAST);
+		}
+
+		return card;
+	}
+
+	private String buildTitle(TrackedEvent event)
+	{
+		Map<String, Object> details = event.getDetails();
+		String type = event.getType();
+		if ("LEVEL_UP".equals(type))
+		{
+			return details.get("skill") + " Level Up";
+		}
+		if ("COLLECTION_LOG".equals(type))
+		{
+			return String.valueOf(details.get("itemName"));
+		}
+		if ("COMBAT_TASK_COMPLETE".equals(type))
+		{
+			return String.valueOf(details.get("taskName"));
+		}
+		if ("BOSS_DROP".equals(type))
+		{
+			return String.valueOf(details.get("itemName"));
+		}
+		if ("BOSS_KC".equals(type))
+		{
+			return String.valueOf(details.get("bossName"));
+		}
+
+		return event.getSummary();
+	}
+
+	private String buildSubtitle(TrackedEvent event)
+	{
+		Map<String, Object> details = event.getDetails();
+		String type = event.getType();
+		if ("LEVEL_UP".equals(type))
+		{
+			return "Reached level " + details.get("newLevel");
+		}
+		if ("COLLECTION_LOG".equals(type))
+		{
+			return details.get("playerName") + " unlocked " + details.get("unlockedCount") + "/" + details.get("totalCount");
+		}
+		if ("COMBAT_TASK_COMPLETE".equals(type))
+		{
+			String tier = String.valueOf(details.get("tier"));
+			return (tier == null || tier.isBlank() ? "Combat task complete" : toTitleCase(tier) + " combat task complete");
+		}
+		if ("BOSS_DROP".equals(type))
+		{
+			return details.get("bossName") + " drop worth " + formatCoins(details.get("value"));
+		}
+		if ("BOSS_KC".equals(type))
+		{
+			String countType = String.valueOf(details.get("countType")).toLowerCase().replace('_', ' ');
+			return toTitleCase(countType);
+		}
+
+		return event.getSummary();
+	}
+
+	private String buildBadgeText(TrackedEvent event)
+	{
+		if ("BOSS_KC".equals(event.getType()))
+		{
+			return "x" + event.getDetails().get("count");
+		}
+
+		return null;
+	}
+
+	private String buildMetaText(TrackedEvent event)
+	{
+		Object playerName = event.getDetails().get("playerName");
+		if (playerName != null && !String.valueOf(playerName).isBlank())
+		{
+			return String.valueOf(playerName);
+		}
+
+		return null;
+	}
+
+	private ImageIcon resolveIcon(TrackedEvent event)
+	{
+		String resourceName;
+		String fallbackText;
+		Color fallbackColor;
+		switch (event.getType())
+		{
+			case "LEVEL_UP":
+				resourceName = "skills icon.png";
+				fallbackText = "Lv";
+				fallbackColor = new Color(88, 145, 94);
+				break;
+			case "COLLECTION_LOG":
+				resourceName = "collection log detail.png";
+				fallbackText = "CL";
+				fallbackColor = new Color(140, 104, 66);
+				break;
+			case "COMBAT_TASK_COMPLETE":
+				resourceName = "combat icon.png";
+				fallbackText = "CT";
+				fallbackColor = new Color(154, 70, 70);
+				break;
+			case "BOSS_DROP":
+				resourceName = "coins detail .png";
+				fallbackText = "GP";
+				fallbackColor = new Color(166, 142, 54);
+				break;
+			case "BOSS_KC":
+				resourceName = "boss kc icon.png";
+				fallbackText = "KC";
+				fallbackColor = new Color(92, 117, 168);
+				break;
+			default:
+				resourceName = null;
+				fallbackText = "?";
+				fallbackColor = new Color(94, 102, 117);
+		}
+
+		if (resourceName != null)
+		{
+			try
+			{
+				BufferedImage resourceImage = ImageIO.read(ProgressPanel.class.getResourceAsStream("/" + resourceName));
+				if (resourceImage != null)
+				{
+					return new ImageIcon(resourceImage.getScaledInstance(CARD_ICON_SIZE, CARD_ICON_SIZE, Image.SCALE_SMOOTH));
+				}
+			}
+			catch (IllegalArgumentException | IOException ignored)
+			{
+				// Falls back to a generated icon until real assets are available in resources.
+			}
+		}
+
+		return new ImageIcon(createFallbackIcon(fallbackText, fallbackColor));
+	}
+
+	private BufferedImage createFallbackIcon(String text, Color backgroundColor)
+	{
+		BufferedImage image = new BufferedImage(CARD_ICON_SIZE, CARD_ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = image.createGraphics();
+		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+		graphics.setColor(backgroundColor);
+		graphics.fillRoundRect(0, 0, CARD_ICON_SIZE, CARD_ICON_SIZE, 8, 8);
+		graphics.setColor(Color.WHITE);
+		graphics.setFont(graphics.getFont().deriveFont(Font.BOLD, 12f));
+		graphics.drawString(text, 7, 20);
+		graphics.dispose();
+		return image;
+	}
+
+	private String formatCoins(Object value)
+	{
+		if (!(value instanceof Number))
+		{
+			return String.valueOf(value) + " gp";
+		}
+
+		return String.format("%,d gp", ((Number) value).longValue());
+	}
+
+	private String toTitleCase(String text)
+	{
+		if (text == null || text.isBlank())
+		{
+			return "";
+		}
+
+		String lowerCase = text.toLowerCase();
+		String[] parts = lowerCase.split(" ");
+		StringBuilder builder = new StringBuilder();
+		for (int index = 0; index < parts.length; index++)
+		{
+			if (parts[index].isEmpty())
+			{
+				continue;
+			}
+
+			if (builder.length() > 0)
+			{
+				builder.append(' ');
+			}
+
+			builder.append(Character.toUpperCase(parts[index].charAt(0)));
+			builder.append(parts[index].substring(1));
+		}
+		return builder.toString();
+	}
+
+	private String asHtml(String text)
+	{
+		return "<html><body style='width:128px'>" + text + "</body></html>";
 	}
 }
