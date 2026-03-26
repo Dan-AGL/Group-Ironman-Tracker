@@ -51,6 +51,17 @@ public interface GIMTrackerConfig extends Config
 		return 5;
 	}
 
+	// Sets the minimum drop value before a boss drop is queued for syncing.
+	@ConfigItem(
+		keyName = "dropValueThreshold",
+		name = "Drop Value Threshold",
+		description = "Only queue boss drops at or above this coin value"
+	)
+	default int dropValueThreshold()
+	{
+		return 2000;
+	}
+
 	// Exposes temporary testing controls so tracked events can be validated without gameplay.
 	@ConfigItem(
 		keyName = "developerMode",

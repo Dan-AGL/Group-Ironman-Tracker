@@ -80,6 +80,19 @@ public class EventTracker
 		return List.of(trackedEvent);
 	}
 
+	// Queues boss drop events once they pass the configured value threshold.
+	public List<TrackedEvent> captureBossDropEvent(String bossName, String itemName, long value, String sourceChannel, int threshold)
+	{
+		if (value < threshold)
+		{
+			return List.of();
+		}
+
+		TrackedEvent trackedEvent = TrackedEvent.bossDrop(bossName, itemName, value, sourceChannel);
+		queueEvent(trackedEvent);
+		return List.of(trackedEvent);
+	}
+
 	// Hands pending events to the sync layer and clears the queue on a best-effort basis.
 	public List<TrackedEvent> drainPendingEvents()
 	{

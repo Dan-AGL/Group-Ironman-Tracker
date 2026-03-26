@@ -59,6 +59,23 @@ public class TrackedEvent
 		);
 	}
 
+	// Creates a boss drop event with the item, value, and source boss extracted from chat.
+	public static TrackedEvent bossDrop(String bossName, String itemName, long value, String sourceChannel)
+	{
+		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("bossName", bossName);
+		details.put("itemName", itemName);
+		details.put("value", value);
+		details.put("sourceChannel", sourceChannel);
+
+		return new TrackedEvent(
+			"BOSS_DROP",
+			Instant.now().toString(),
+			itemName + " from " + bossName + ": " + value + " gp",
+			details
+		);
+	}
+
 	// Returns the event category used by the backend and future filtering.
 	public String getType()
 	{

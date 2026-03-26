@@ -43,6 +43,9 @@ public class GIMTrackerPlugin extends Plugin
 	private static final Pattern BOSS_COUNT_MESSAGE = Pattern.compile(
 		"Your (.+?) (kill count|completion count) is:? ([\\d,]+)\\.?$"
 	);
+	private static final Pattern BOSS_DROP_MESSAGE = Pattern.compile(
+		"(?:.+? received a drop: |Drop: )(.+?) \\(([\\d,]+) coins\\) from (.+?)\\.?$"
+	);
 
 	@Inject
 	private Client client;
@@ -135,16 +138,35 @@ public class GIMTrackerPlugin extends Plugin
 	@Subscribe
 	public void onChatMessage(ChatMessage event)
 	{
-		if (client.getGameState() != GameState.LOGGED_IN || event.getType() != ChatMessageType.GAMEMESSAGE)
+		if (client.getGameState() != GameState.LOGGED_IN)
 		{
 			return;
 		}
 
 		String message = Text.removeTags(event.getMessage()).trim();
+		if (tryCaptureBossCountEvent(message))
+		{
+			return;
+		}
+
+		if (tryCaptureBossDropEvent(message, event.getType()))
+		{
+			return;
+		}
+
+		if (config.developerMode() && message.toLowerCase().contains("drop"))
+		{
+			log.debug("Unmatched drop chat [{}]: {}", event.getType(), message);
+		}
+	}
+
+	// Extracts boss KC and completion events from game chat messages.
+	private boolean tryCaptureBossCountEvent(String message)
+	{
 		Matcher matcher = BOSS_COUNT_MESSAGE.matcher(message);
 		if (!matcher.matches())
 		{
-			return;
+			return false;
 		}
 
 		String bossName = matcher.group(1);
@@ -163,6 +185,38 @@ public class GIMTrackerPlugin extends Plugin
 			progressPanel.updateStatus("Captured boss KC for " + bossName);
 			refreshPanel();
 		}
+
+		return !newEvents.isEmpty();
+	}
+
+	// Extracts boss drop events from game, clan, or group-style chat messages when the value is high enough.
+	private boolean tryCaptureBossDropEvent(String message, ChatMessageType messageType)
+	{
+		Matcher matcher = BOSS_DROP_MESSAGE.matcher(message);
+		if (!matcher.matches())
+		{
+			return false;
+		}
+
+		String itemName = matcher.group(1);
+		long value = Long.parseLong(matcher.group(2).replace(",", ""));
+		String bossName = matcher.group(3);
+		List<TrackedEvent> newEvents = eventTracker.captureBossDropEvent(
+			bossName,
+			itemName,
+			value,
+			messageType.name(),
+			config.dropValueThreshold()
+		);
+
+		if (!newEvents.isEmpty())
+		{
+			log.debug("Captured {} boss drop events", newEvents.size());
+			progressPanel.updateStatus("Captured drop from " + bossName);
+			refreshPanel();
+		}
+
+		return !newEvents.isEmpty();
 	}
 
 	// Periodically flushes queued events instead of sending one request per RuneLite event.
