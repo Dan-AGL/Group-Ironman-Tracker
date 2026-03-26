@@ -102,6 +102,30 @@ public class TrackedEvent
 		return combatTaskComplete("Perfect Brutus", "MEDIUM", "DEVELOPER_MODE");
 	}
 
+	// Creates a collection-log event when a player unlocks a new item slot.
+	public static TrackedEvent collectionLogItem(String playerName, String itemName, int unlockedCount, int totalCount, String sourceChannel)
+	{
+		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("playerName", playerName);
+		details.put("itemName", itemName);
+		details.put("unlockedCount", unlockedCount);
+		details.put("totalCount", totalCount);
+		details.put("sourceChannel", sourceChannel);
+
+		return new TrackedEvent(
+			"COLLECTION_LOG",
+			Instant.now().toString(),
+			playerName + " unlocked collection log item: " + itemName + " (" + unlockedCount + "/" + totalCount + ")",
+			details
+		);
+	}
+
+	// Creates a fake collection-log event for developer testing.
+	public static TrackedEvent testCollectionLog()
+	{
+		return collectionLogItem("GIM LeDonj", "Brutus Club", 422, 1692, "DEVELOPER_MODE");
+	}
+
 	// Returns the event category used by the backend and future filtering.
 	public String getType()
 	{

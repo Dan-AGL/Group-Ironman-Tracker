@@ -24,6 +24,7 @@ public class ProgressPanel extends PluginPanel
 	private final JLabel recentValue = new JLabel("No recent events");
 	private final JButton addTestEventButton = new JButton("Add Test Level-Up");
 	private final JButton addTestCombatTaskButton = new JButton("Add Test Combat Task");
+	private final JButton addTestCollectionLogButton = new JButton("Add Test Collection Log");
 	private final JPanel actionPanel = new JPanel(new GridLayout(0, 1, 0, 6));
 
 	// Builds the small Phase 2 sidebar with sync status, queue size, and optional developer test controls.
@@ -31,6 +32,7 @@ public class ProgressPanel extends PluginPanel
 		Runnable syncNowAction,
 		Runnable addTestEventAction,
 		Runnable addTestCombatTaskAction,
+		Runnable addTestCollectionLogAction,
 		boolean developerMode
 	)
 	{
@@ -53,10 +55,12 @@ public class ProgressPanel extends PluginPanel
 		syncButton.addActionListener(event -> syncNowAction.run());
 		addTestEventButton.addActionListener(event -> addTestEventAction.run());
 		addTestCombatTaskButton.addActionListener(event -> addTestCombatTaskAction.run());
+		addTestCollectionLogButton.addActionListener(event -> addTestCollectionLogAction.run());
 
 		actionPanel.add(syncButton);
 		actionPanel.add(addTestEventButton);
 		actionPanel.add(addTestCombatTaskButton);
+		actionPanel.add(addTestCollectionLogButton);
 		setDeveloperMode(developerMode);
 
 		add(summaryPanel, BorderLayout.NORTH);
@@ -105,6 +109,7 @@ public class ProgressPanel extends PluginPanel
 	{
 		addTestEventButton.setVisible(developerMode);
 		addTestCombatTaskButton.setVisible(developerMode);
+		addTestCollectionLogButton.setVisible(developerMode);
 		actionPanel.revalidate();
 		actionPanel.repaint();
 	}

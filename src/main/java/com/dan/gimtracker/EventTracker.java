@@ -21,6 +21,7 @@ public class EventTracker
 	private final Map<Skill, Integer> lastKnownLevels = new EnumMap<>(Skill.class);
 	private final Map<String, Integer> lastReportedBossCounts = new HashMap<>();
 	private final Set<String> completedCombatTasks = new HashSet<>();
+	private final Set<String> unlockedCollectionLogEntries = new HashSet<>();
 	private final List<TrackedEvent> pendingEvents = new ArrayList<>();
 	private final Deque<TrackedEvent> recentEvents = new ArrayDeque<>();
 
@@ -40,6 +41,12 @@ public class EventTracker
 	public void resetCombatTaskBaseline()
 	{
 		completedCombatTasks.clear();
+	}
+
+	// Clears remembered collection-log items so a fresh session can establish which unlocks are new.
+	public void resetCollectionLogBaseline()
+	{
+		unlockedCollectionLogEntries.clear();
 	}
 
 	// Converts a RuneLite stat change into one or more queued level-up events when the real level increases.
@@ -112,6 +119,32 @@ public class EventTracker
 		}
 
 		TrackedEvent trackedEvent = TrackedEvent.combatTaskComplete(normalizedTask, tier, sourceChannel);
+		queueEvent(trackedEvent);
+		return List.of(trackedEvent);
+	}
+
+	// Queues a collection-log item the first time that item/count combination is observed in the session.
+	public List<TrackedEvent> captureCollectionLogEvent(
+		String playerName,
+		String itemName,
+		int unlockedCount,
+		int totalCount,
+		String sourceChannel
+	)
+	{
+		String key = playerName.trim() + "|" + itemName.trim() + "|" + unlockedCount + "|" + totalCount;
+		if (!unlockedCollectionLogEntries.add(key))
+		{
+			return List.of();
+		}
+
+		TrackedEvent trackedEvent = TrackedEvent.collectionLogItem(
+			playerName.trim(),
+			itemName.trim(),
+			unlockedCount,
+			totalCount,
+			sourceChannel
+		);
 		queueEvent(trackedEvent);
 		return List.of(trackedEvent);
 	}

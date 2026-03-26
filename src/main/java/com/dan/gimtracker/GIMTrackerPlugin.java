@@ -54,6 +54,10 @@ public class GIMTrackerPlugin extends Plugin
 		"Congratulations!? (?:you've|you have) completed (?:an? )?(easy|medium|hard|elite|master|grandmaster) combat achievement '?(.+?)'?(?: \\((\\d+) points?\\))?\\.?$",
 		Pattern.CASE_INSENSITIVE
 	);
+	private static final Pattern COLLECTION_LOG_MESSAGE = Pattern.compile(
+		"(.+?) received a new collection log item: (.+?) \\(([\\d,]+)/([\\d,]+)\\)\\.?$",
+		Pattern.CASE_INSENSITIVE
+	);
 
 	@Inject
 	private Client client;
@@ -81,6 +85,7 @@ public class GIMTrackerPlugin extends Plugin
 			this::requestManualSync,
 			this::addTestLevelUpEvent,
 			this::addTestCombatTaskEvent,
+			this::addTestCollectionLogEvent,
 			config.developerMode()
 		);
 		navigationButton = NavigationButton.builder()
@@ -97,6 +102,7 @@ public class GIMTrackerPlugin extends Plugin
 			eventTracker.resetLevelBaseline();
 			eventTracker.resetBossCountBaseline();
 			eventTracker.resetCombatTaskBaseline();
+			eventTracker.resetCollectionLogBaseline();
 		}
 	}
 
@@ -119,6 +125,7 @@ public class GIMTrackerPlugin extends Plugin
 			eventTracker.resetLevelBaseline();
 			eventTracker.resetBossCountBaseline();
 			eventTracker.resetCombatTaskBaseline();
+			eventTracker.resetCollectionLogBaseline();
 			progressPanel.updateStatus("Tracking level-ups");
 			refreshPanel();
 		}
@@ -127,6 +134,7 @@ public class GIMTrackerPlugin extends Plugin
 			eventTracker.resetLevelBaseline();
 			eventTracker.resetBossCountBaseline();
 			eventTracker.resetCombatTaskBaseline();
+			eventTracker.resetCollectionLogBaseline();
 			flushPendingEvents("logout");
 			progressPanel.updateStatus("Waiting for login");
 			refreshPanel();
@@ -175,6 +183,11 @@ public class GIMTrackerPlugin extends Plugin
 			return;
 		}
 
+		if (tryCaptureCollectionLogEvent(message, event.getType()))
+		{
+			return;
+		}
+
 		if (config.developerMode() && message.toLowerCase().contains("drop"))
 		{
 			log.debug("Unmatched drop chat [{}]: {}", event.getType(), message);
@@ -183,6 +196,11 @@ public class GIMTrackerPlugin extends Plugin
 		if (config.developerMode() && message.toLowerCase().contains("combat achievement"))
 		{
 			log.debug("Unmatched combat task chat [{}]: {}", event.getType(), message);
+		}
+
+		if (config.developerMode() && message.toLowerCase().contains("collection log"))
+		{
+			log.debug("Unmatched collection log chat [{}]: {}", event.getType(), message);
 		}
 	}
 
@@ -285,6 +303,37 @@ public class GIMTrackerPlugin extends Plugin
 		return !newEvents.isEmpty();
 	}
 
+	// Extracts collection-log unlocks from chat messages and de-duplicates them within the session.
+	private boolean tryCaptureCollectionLogEvent(String message, ChatMessageType messageType)
+	{
+		Matcher matcher = COLLECTION_LOG_MESSAGE.matcher(message);
+		if (!matcher.matches())
+		{
+			return false;
+		}
+
+		String playerName = matcher.group(1);
+		String itemName = matcher.group(2);
+		int unlockedCount = Integer.parseInt(matcher.group(3).replace(",", ""));
+		int totalCount = Integer.parseInt(matcher.group(4).replace(",", ""));
+		List<TrackedEvent> newEvents = eventTracker.captureCollectionLogEvent(
+			playerName,
+			itemName,
+			unlockedCount,
+			totalCount,
+			messageType.name()
+		);
+
+		if (!newEvents.isEmpty())
+		{
+			log.debug("Captured {} collection log events", newEvents.size());
+			progressPanel.updateStatus("Captured collection log unlock");
+			refreshPanel();
+		}
+
+		return !newEvents.isEmpty();
+	}
+
 	// Periodically flushes queued events instead of sending one request per RuneLite event.
 	@Subscribe
 	public void onGameTick(GameTick event)
@@ -327,6 +376,14 @@ public class GIMTrackerPlugin extends Plugin
 	{
 		eventTracker.addTestEvent(TrackedEvent.testCombatTask());
 		progressPanel.updateStatus("Queued test combat task");
+		refreshPanel();
+	}
+
+	// Injects a synthetic collection-log event so the pipeline can be tested without a real unlock.
+	private void addTestCollectionLogEvent()
+	{
+		eventTracker.addTestEvent(TrackedEvent.testCollectionLog());
+		progressPanel.updateStatus("Queued test collection log");
 		refreshPanel();
 	}
 
