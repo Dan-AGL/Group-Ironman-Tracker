@@ -1,7 +1,15 @@
 package com.dan.gimtracker;
 
 import com.dan.gimtracker.model.ProgressUploadRequest;
+import com.dan.gimtracker.model.BackendEventResponse;
+import com.dan.gimtracker.model.CreateGroupRequest;
+import com.dan.gimtracker.model.GroupMemberResponse;
+import com.dan.gimtracker.model.GroupResponse;
+import com.dan.gimtracker.model.JoinGroupRequest;
+import com.dan.gimtracker.model.LeaveGroupRequest;
 import com.dan.gimtracker.model.TrackedEvent;
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import com.google.inject.Provides;
 import java.awt.Color;
 import java.awt.Graphics2D;
@@ -11,6 +19,11 @@ import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.stream.Collectors;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
@@ -67,15 +80,20 @@ public class GIMTrackerPlugin extends Plugin
 	private GIMTrackerConfig config;
 
 	@Inject
+	private ConfigManager configManager;
+
+	@Inject
 	private ClientToolbar clientToolbar;
 
 	private final EventTracker eventTracker = new EventTracker();
 	private final SyncService syncService = new SyncService();
 	private final ExecutorService syncExecutor = Executors.newSingleThreadExecutor();
+	private final Gson gson = new Gson();
 
 	private ProgressPanel progressPanel;
 	private NavigationButton navigationButton;
 	private Instant lastSyncAttempt = Instant.EPOCH;
+	private List<TrackedEvent> persistedRecentEvents = List.of();
 
 	// Creates the sidebar entry point, initializes the panel state, and seeds tracking if already logged in.
 	@Override
@@ -85,6 +103,10 @@ public class GIMTrackerPlugin extends Plugin
 		progressPanel = new ProgressPanel(
 			config.developerMode()
 		);
+		progressPanel.setCreateGroupAction(this::createGroup);
+		progressPanel.setLeaveGroupAction(this::leaveGroup);
+		progressPanel.setJoinGroupAction(this::joinGroup);
+		progressPanel.setShowMembersAction(() -> progressPanel.showMembersDialog());
 		navigationButton = NavigationButton.builder()
 			.tooltip("Group Ironman Tracker")
 			.icon(createToolbarIcon())
@@ -93,6 +115,7 @@ public class GIMTrackerPlugin extends Plugin
 			.build();
 		clientToolbar.addNavigation(navigationButton);
 		refreshPanel();
+		refreshGroupDetails();
 
 		if (client.getGameState() == GameState.LOGGED_IN)
 		{
@@ -125,6 +148,7 @@ public class GIMTrackerPlugin extends Plugin
 			eventTracker.resetCollectionLogBaseline();
 			progressPanel.updateStatus("Tracking level-ups");
 			refreshPanel();
+			refreshGroupDetails();
 		}
 		else if (gameStateChanged.getGameState() == GameState.LOGIN_SCREEN)
 		{
@@ -366,6 +390,13 @@ public class GIMTrackerPlugin extends Plugin
 	// Moves queued events into an upload request and sends them off-thread so the client stays responsive.
 	private void flushPendingEvents(String reason)
 	{
+		if (config.groupCode().isBlank())
+		{
+			progressPanel.updateStatus("Create or join a group");
+			refreshPanel();
+			return;
+		}
+
 		List<TrackedEvent> events = eventTracker.drainPendingEvents();
 		if (events.isEmpty())
 		{
@@ -401,6 +432,7 @@ public class GIMTrackerPlugin extends Plugin
 				{
 					log.debug("Synced {} events via {}", events.size(), reason);
 					progressPanel.updateStatus("Last sync succeeded");
+					refreshPersistedEvents();
 				}
 			}
 			catch (IOException ex)
@@ -425,7 +457,317 @@ public class GIMTrackerPlugin extends Plugin
 		progressPanel.setDeveloperMode(config.developerMode());
 		progressPanel.updatePendingCount(eventTracker.getPendingCount());
 		progressPanel.updateLastSync(syncService.getLastSuccessfulSync());
-		progressPanel.updateRecentEvents(eventTracker.getRecentEvents());
+		progressPanel.updateRecentEvents(buildDisplayEvents());
+		progressPanel.updateGroup(config.groupName(), config.groupCode());
+	}
+
+	private void createGroup()
+	{
+		Player localPlayer = client.getLocalPlayer();
+		String playerName = localPlayer == null ? "" : localPlayer.getName();
+		String groupName = progressPanel.promptForValue("Create Group", "Enter a group name");
+		if (groupName == null || groupName.trim().isEmpty() || playerName.isBlank())
+		{
+			return;
+		}
+
+		progressPanel.updateStatus("Creating group...");
+		syncExecutor.submit(() ->
+		{
+			try
+			{
+				GroupResponse group = syncService.createGroup(
+					config.apiBaseUrl(),
+					new CreateGroupRequest(groupName.trim(), playerName)
+				);
+				saveGroup(group);
+				progressPanel.updateStatus("Created group " + group.getName());
+				refreshGroupDetails();
+			}
+			catch (IOException ex)
+			{
+				log.warn("Failed to create group", ex);
+				progressPanel.updateStatus("Group create failed");
+			}
+		});
+	}
+
+	private void joinGroup()
+	{
+		Player localPlayer = client.getLocalPlayer();
+		String playerName = localPlayer == null ? "" : localPlayer.getName();
+		String inviteCode = progressPanel.promptForValue("Join Group", "Enter the invite code");
+		if (inviteCode == null || inviteCode.trim().isEmpty() || playerName.isBlank())
+		{
+			return;
+		}
+
+		progressPanel.updateStatus("Joining group...");
+		syncExecutor.submit(() ->
+		{
+			try
+			{
+				GroupResponse group = syncService.joinGroup(
+					config.apiBaseUrl(),
+					new JoinGroupRequest(inviteCode.trim(), playerName)
+				);
+				saveGroup(group);
+				progressPanel.updateStatus("Joined " + group.getName());
+				refreshGroupDetails();
+			}
+			catch (IOException ex)
+			{
+				log.warn("Failed to join group", ex);
+				progressPanel.updateStatus("Group join failed");
+			}
+		});
+	}
+
+	private void refreshGroupDetails()
+	{
+		String inviteCode = config.groupCode();
+		if (inviteCode.isBlank())
+		{
+			progressPanel.updateGroup(config.groupName(), "");
+			progressPanel.updateMembers(List.of());
+			persistedRecentEvents = List.of();
+			refreshPanel();
+			return;
+		}
+
+		syncExecutor.submit(() ->
+		{
+			try
+			{
+				GroupResponse group = syncService.fetchGroup(config.apiBaseUrl(), inviteCode);
+				List<GroupMemberResponse> members = syncService.fetchMembers(config.apiBaseUrl(), inviteCode);
+				saveGroup(group);
+				progressPanel.updateMembers(
+					members.stream()
+						.map(member -> member.getPlayerName() + " (" + member.getRole() + ")")
+						.collect(Collectors.toList())
+				);
+				refreshPersistedEvents();
+			}
+			catch (IOException ex)
+			{
+				log.warn("Failed to refresh group details", ex);
+				progressPanel.updateStatus("Group refresh failed");
+			}
+		});
+	}
+
+	private void leaveGroup()
+	{
+		Player localPlayer = client.getLocalPlayer();
+		String playerName = localPlayer == null ? "" : localPlayer.getName();
+		if (config.groupCode().isBlank() || playerName.isBlank())
+		{
+			return;
+		}
+
+		boolean confirmed = progressPanel.confirm("Leave Group", "Leave " + config.groupName() + "?");
+		if (!confirmed)
+		{
+			return;
+		}
+
+		progressPanel.updateStatus("Leaving group...");
+		syncExecutor.submit(() ->
+		{
+			try
+			{
+				syncService.leaveGroup(
+					config.apiBaseUrl(),
+					new LeaveGroupRequest(config.groupCode(), playerName)
+				);
+				clearSavedGroup();
+				progressPanel.updateMembers(List.of());
+				persistedRecentEvents = List.of();
+				progressPanel.updateStatus("Left group");
+				refreshPanel();
+			}
+			catch (IOException ex)
+			{
+				log.warn("Failed to leave group", ex);
+				progressPanel.updateStatus("Leave group failed");
+			}
+		});
+	}
+
+	private void saveGroup(GroupResponse group)
+	{
+		configManager.setConfiguration("gimtracker", "groupCode", group.getInviteCode());
+		configManager.setConfiguration("gimtracker", "groupName", group.getName());
+	}
+
+	private void clearSavedGroup()
+	{
+		configManager.setConfiguration("gimtracker", "groupCode", "");
+		configManager.setConfiguration("gimtracker", "groupName", "");
+	}
+
+	private void refreshPersistedEvents()
+	{
+		String inviteCode = config.groupCode();
+		if (inviteCode.isBlank())
+		{
+			persistedRecentEvents = List.of();
+			refreshPanel();
+			return;
+		}
+
+		try
+		{
+			List<BackendEventResponse> backendEvents = syncService.fetchGroupEvents(config.apiBaseUrl(), inviteCode);
+			persistedRecentEvents = collapsePersistedEvents(backendEvents.stream()
+				.map(this::toTrackedEvent)
+				.filter(event -> event != null)
+				.collect(Collectors.toList()));
+			refreshPanel();
+		}
+		catch (IOException ex)
+		{
+			log.warn("Failed to refresh persisted events", ex);
+			progressPanel.updateStatus("History refresh failed");
+		}
+	}
+
+	private List<TrackedEvent> buildDisplayEvents()
+	{
+		LinkedHashMap<String, TrackedEvent> combined = new LinkedHashMap<>();
+		List<TrackedEvent> localEvents = eventTracker.getRecentEvents();
+		for (TrackedEvent event : localEvents)
+		{
+			combined.put(eventKey(event), event);
+		}
+
+		for (int index = persistedRecentEvents.size() - 1; index >= 0; index--)
+		{
+			TrackedEvent event = persistedRecentEvents.get(index);
+			combined.putIfAbsent(eventKey(event), event);
+		}
+
+		return combined.values()
+			.stream()
+			.limit(5)
+			.collect(Collectors.toList());
+	}
+
+	private String eventKey(TrackedEvent event)
+	{
+		return event.getType() + "|" + event.getTimestamp() + "|" + event.getSummary();
+	}
+
+	private TrackedEvent toTrackedEvent(BackendEventResponse backendEvent)
+	{
+		Map<String, Object> payload = gson.fromJson(
+			backendEvent.getPayloadJson(),
+			new TypeToken<Map<String, Object>>() { }.getType()
+		);
+		if (payload == null)
+		{
+			return null;
+		}
+
+		Object summary = payload.get("summary");
+		Object details = payload.get("details");
+		if (!(details instanceof Map))
+		{
+			return null;
+		}
+
+		Map<String, Object> typedDetails = new LinkedHashMap<>((Map<String, Object>) details);
+		return new TrackedEvent(
+			backendEvent.getEventType(),
+			backendEvent.getEventTime(),
+			summary == null ? backendEvent.getEventType() : String.valueOf(summary),
+			typedDetails
+		);
+	}
+
+	private List<TrackedEvent> collapsePersistedEvents(List<TrackedEvent> events)
+	{
+		List<TrackedEvent> collapsed = new ArrayList<>();
+		for (TrackedEvent event : events)
+		{
+			if (!"BOSS_KC".equals(event.getType()))
+			{
+				collapsed.add(event);
+				continue;
+			}
+
+			if (collapsed.isEmpty())
+			{
+				collapsed.add(event);
+				continue;
+			}
+
+			TrackedEvent previous = collapsed.get(collapsed.size() - 1);
+			if (isSameBossKcSession(previous, event))
+			{
+				collapsed.set(collapsed.size() - 1, event);
+			}
+			else
+			{
+				collapsed.add(event);
+			}
+		}
+
+		Collections.reverse(collapsed);
+		return collapsed;
+	}
+
+	private boolean isSameBossKcSession(TrackedEvent previous, TrackedEvent current)
+	{
+		if (!"BOSS_KC".equals(previous.getType()) || !"BOSS_KC".equals(current.getType()))
+		{
+			return false;
+		}
+
+		Map<String, Object> previousDetails = previous.getDetails();
+		Map<String, Object> currentDetails = current.getDetails();
+		if (!String.valueOf(previousDetails.get("playerName")).equals(String.valueOf(currentDetails.get("playerName"))))
+		{
+			return false;
+		}
+		if (!String.valueOf(previousDetails.get("bossName")).equals(String.valueOf(currentDetails.get("bossName"))))
+		{
+			return false;
+		}
+		if (!String.valueOf(previousDetails.get("countType")).equals(String.valueOf(currentDetails.get("countType"))))
+		{
+			return false;
+		}
+
+		int previousSessionCount = readInt(previousDetails.get("count"));
+		int currentSessionCount = readInt(currentDetails.get("count"));
+		int previousTotalCount = readInt(previousDetails.get("totalCount"));
+		int currentTotalCount = readInt(currentDetails.get("totalCount"));
+
+		return currentSessionCount > previousSessionCount && currentTotalCount > previousTotalCount;
+	}
+
+	private int readInt(Object value)
+	{
+		if (value instanceof Number)
+		{
+			return ((Number) value).intValue();
+		}
+
+		if (value == null)
+		{
+			return -1;
+		}
+
+		try
+		{
+			return Integer.parseInt(String.valueOf(value));
+		}
+		catch (NumberFormatException ex)
+		{
+			return -1;
+		}
 	}
 
 	// Generates a simple in-code toolbar icon so the plugin does not depend on external image assets yet.

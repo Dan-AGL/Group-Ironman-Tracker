@@ -21,8 +21,10 @@ import javax.imageio.ImageIO;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.BorderFactory;
+import javax.swing.JButton;
 import javax.swing.ImageIcon;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.ScrollPaneConstants;
@@ -41,6 +43,7 @@ public class ProgressPanel extends PluginPanel
 	private static final Color META_COLOR = new Color(146, 156, 170);
 	private static final Color BADGE_BACKGROUND = new Color(86, 124, 184);
 	private static final Color BADGE_TEXT = new Color(245, 247, 250);
+	private static final Color ACTION_BACKGROUND = new Color(58, 66, 79);
 	private static final int CARD_ICON_SIZE = 26;
 	private static final int CARD_HEIGHT = 58;
 	private static final DateTimeFormatter TIME_FORMATTER =
@@ -48,8 +51,14 @@ public class ProgressPanel extends PluginPanel
 
 	private final JLabel lastSyncValue = new JLabel("Never");
 	private final JLabel statusValue = new JLabel("Idle");
+	private final JLabel groupNameValue = new JLabel("Not linked");
 	private final JPanel recentEventsContainer = new JPanel();
 	private final JPanel footerPanel = new JPanel(new GridLayout(0, 1, 0, 4));
+	private Runnable createGroupAction = () -> { };
+	private Runnable leaveGroupAction = () -> { };
+	private Runnable joinGroupAction = () -> { };
+	private Runnable showMembersAction = () -> { };
+	private List<String> currentMembers = List.of();
 
 	// Builds the small sidebar with sync status and a scrollable recent-event feed.
 	public ProgressPanel(
@@ -77,6 +86,28 @@ public class ProgressPanel extends PluginPanel
 		recentPanel.setBorder(BorderFactory.createTitledBorder("Recent Group Activity"));
 		recentPanel.add(recentScrollPane, BorderLayout.CENTER);
 
+		JPanel groupPanel = new JPanel(new BorderLayout(0, 8));
+		groupPanel.setBackground(PANEL_BACKGROUND);
+		groupPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
+
+		groupNameValue.setForeground(TITLE_COLOR);
+		groupNameValue.setHorizontalAlignment(SwingConstants.CENTER);
+		groupNameValue.setAlignmentX(Component.CENTER_ALIGNMENT);
+		groupNameValue.setFont(groupNameValue.getFont().deriveFont(Font.BOLD, 19f));
+
+		JPanel actionPanel = new JPanel(new GridLayout(1, 0, 6, 0));
+		actionPanel.setBackground(PANEL_BACKGROUND);
+		JButton createButton = createActionButton("+", "Create a new group", () -> createGroupAction.run());
+		JButton leaveButton = createActionButton("-", "Leave the current group", () -> leaveGroupAction.run());
+		JButton membersButton = createActionButton("M", "Show current group members", () -> showMembersAction.run());
+		JButton joinButton = createActionButton("J", "Join a group with an invite code", () -> joinGroupAction.run());
+		actionPanel.add(createButton);
+		actionPanel.add(leaveButton);
+		actionPanel.add(membersButton);
+		actionPanel.add(joinButton);
+		groupPanel.add(groupNameValue, BorderLayout.NORTH);
+		groupPanel.add(actionPanel, BorderLayout.SOUTH);
+
 		footerPanel.setBackground(PANEL_BACKGROUND);
 		styleValueLabel(statusValue);
 		styleValueLabel(lastSyncValue);
@@ -86,6 +117,7 @@ public class ProgressPanel extends PluginPanel
 		footerPanel.add(lastSyncValue);
 		setDeveloperMode(developerMode);
 
+		add(groupPanel, BorderLayout.NORTH);
 		add(recentPanel, BorderLayout.CENTER);
 		add(footerPanel, BorderLayout.SOUTH);
 	}
@@ -108,6 +140,56 @@ public class ProgressPanel extends PluginPanel
 	public void updateStatus(String status)
 	{
 		runOnUiThread(() -> statusValue.setText(status));
+	}
+
+	public void updateGroup(String groupName, String inviteCode)
+	{
+		runOnUiThread(() ->
+			groupNameValue.setText(groupName == null || groupName.isBlank() ? "No Group" : groupName)
+		);
+	}
+
+	public void updateMembers(List<String> members)
+	{
+		currentMembers = members;
+	}
+
+	public void setCreateGroupAction(Runnable createGroupAction)
+	{
+		this.createGroupAction = createGroupAction;
+	}
+
+	public void setJoinGroupAction(Runnable joinGroupAction)
+	{
+		this.joinGroupAction = joinGroupAction;
+	}
+
+	public void setLeaveGroupAction(Runnable leaveGroupAction)
+	{
+		this.leaveGroupAction = leaveGroupAction;
+	}
+
+	public void setShowMembersAction(Runnable showMembersAction)
+	{
+		this.showMembersAction = showMembersAction;
+	}
+
+	public String promptForValue(String title, String prompt)
+	{
+		return JOptionPane.showInputDialog(this, prompt, title, JOptionPane.PLAIN_MESSAGE);
+	}
+
+	public boolean confirm(String title, String message)
+	{
+		return JOptionPane.showConfirmDialog(this, message, title, JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION;
+	}
+
+	public void showMembersDialog()
+	{
+		String message = currentMembers.isEmpty()
+			? "No members in this group yet."
+			: String.join("\n", currentMembers);
+		JOptionPane.showMessageDialog(this, message, "Group Members", JOptionPane.PLAIN_MESSAGE);
 	}
 
 	// Renders the latest tracked events in a compact block for quick validation during testing.
@@ -178,6 +260,18 @@ public class ProgressPanel extends PluginPanel
 		emptyState.setForeground(BODY_COLOR);
 		emptyState.setAlignmentX(Component.LEFT_ALIGNMENT);
 		return emptyState;
+	}
+
+	private JButton createActionButton(String text, String toolTipText, Runnable action)
+	{
+		JButton button = new JButton(text);
+		button.setToolTipText(toolTipText);
+		button.setFocusable(false);
+		button.setBackground(ACTION_BACKGROUND);
+		button.setForeground(TITLE_COLOR);
+		button.setBorder(BorderFactory.createEmptyBorder(4, 0, 4, 0));
+		button.addActionListener(event -> action.run());
+		return button;
 	}
 
 	private JPanel createEventCard(TrackedEvent event)
@@ -313,7 +407,21 @@ public class ProgressPanel extends PluginPanel
 	{
 		if ("BOSS_KC".equals(event.getType()))
 		{
-			return "x" + event.getDetails().get("count");
+			Object count = event.getDetails().get("count");
+			if (count instanceof Number)
+			{
+				return "x" + formatWholeNumber((Number) count);
+			}
+			if (count != null)
+			{
+				return "x" + count;
+			}
+
+			Object totalCount = event.getDetails().get("totalCount");
+			if (totalCount instanceof Number)
+			{
+				return "x" + formatWholeNumber((Number) totalCount);
+			}
 		}
 
 		return null;
@@ -409,6 +517,18 @@ public class ProgressPanel extends PluginPanel
 		}
 
 		return String.format("%,d gp", ((Number) value).longValue());
+	}
+
+	private String formatWholeNumber(Number value)
+	{
+		double asDouble = value.doubleValue();
+		long asLong = value.longValue();
+		if (Math.abs(asDouble - asLong) < 0.0000001d)
+		{
+			return Long.toString(asLong);
+		}
+
+		return Double.toString(asDouble);
 	}
 
 	private String toTitleCase(String text)
