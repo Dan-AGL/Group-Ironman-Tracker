@@ -5,16 +5,16 @@ A RuneLite plugin for tracking Group Ironman activity.
 
 The plugin posts batched progress payloads to `POST /api/progress`.
 
-The real Spring backend in the sibling `gimtrackerbackend` repository now listens on `http://localhost:8080`.
+The deployed Spring backend is available at `http://Group-Ironman-Tracker-env.eba-rmummppd.ap-southeast-2.elasticbeanstalk.com`.
 
 Health checks work at:
 
 ```text
-http://localhost:8080/health
-http://localhost:8080/api/health
+http://Group-Ironman-Tracker-env.eba-rmummppd.ap-southeast-2.elasticbeanstalk.com/health
+http://Group-Ironman-Tracker-env.eba-rmummppd.ap-southeast-2.elasticbeanstalk.com/api/health
 ```
 
-Set the plugin `API Base URL` to `http://localhost:8080`.
+Set the plugin `API Base URL` to `http://Group-Ironman-Tracker-env.eba-rmummppd.ap-southeast-2.elasticbeanstalk.com`.
 
 ## Mock Backend
 

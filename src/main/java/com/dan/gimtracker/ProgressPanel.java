@@ -13,8 +13,6 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import javax.imageio.ImageIO;
@@ -46,14 +44,9 @@ public class ProgressPanel extends PluginPanel
 	private static final Color ACTION_BACKGROUND = new Color(58, 66, 79);
 	private static final int CARD_ICON_SIZE = 26;
 	private static final int CARD_HEIGHT = 58;
-	private static final DateTimeFormatter TIME_FORMATTER =
-		DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
 
-	private final JLabel lastSyncValue = new JLabel("Never");
-	private final JLabel statusValue = new JLabel("Idle");
 	private final JLabel groupNameValue = new JLabel("Not linked");
 	private final JPanel recentEventsContainer = new JPanel();
-	private final JPanel footerPanel = new JPanel(new GridLayout(0, 1, 0, 4));
 	private Runnable createGroupAction = () -> { };
 	private Runnable leaveGroupAction = () -> { };
 	private Runnable joinGroupAction = () -> { };
@@ -80,6 +73,7 @@ public class ProgressPanel extends PluginPanel
 		recentScrollPane.getViewport().setBackground(PANEL_BACKGROUND);
 		recentScrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
 		recentScrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+		recentScrollPane.getVerticalScrollBar().setUnitIncrement(16);
 
 		JPanel recentPanel = new JPanel(new BorderLayout());
 		recentPanel.setBackground(PANEL_BACKGROUND);
@@ -108,18 +102,10 @@ public class ProgressPanel extends PluginPanel
 		groupPanel.add(groupNameValue, BorderLayout.NORTH);
 		groupPanel.add(actionPanel, BorderLayout.SOUTH);
 
-		footerPanel.setBackground(PANEL_BACKGROUND);
-		styleValueLabel(statusValue);
-		styleValueLabel(lastSyncValue);
-		footerPanel.add(createHeadingLabel("Status"));
-		footerPanel.add(statusValue);
-		footerPanel.add(createHeadingLabel("Last sync"));
-		footerPanel.add(lastSyncValue);
 		setDeveloperMode(developerMode);
 
 		add(groupPanel, BorderLayout.NORTH);
 		add(recentPanel, BorderLayout.CENTER);
-		add(footerPanel, BorderLayout.SOUTH);
 	}
 
 	// Retained for compatibility with the plugin refresh cycle; the queue count is no longer displayed.
@@ -131,15 +117,13 @@ public class ProgressPanel extends PluginPanel
 	// Converts the last successful sync timestamp into a short display value.
 	public void updateLastSync(Instant lastSync)
 	{
-		runOnUiThread(() ->
-			lastSyncValue.setText(lastSync == null ? "Never" : TIME_FORMATTER.format(lastSync))
-		);
+		runOnUiThread(() -> { });
 	}
 
 	// Surfaces the current sync state so testing failures are visible without reading logs.
 	public void updateStatus(String status)
 	{
-		runOnUiThread(() -> statusValue.setText(status));
+		runOnUiThread(() -> { });
 	}
 
 	public void updateGroup(String groupName, String inviteCode)
@@ -238,20 +222,6 @@ public class ProgressPanel extends PluginPanel
 		}
 
 		SwingUtilities.invokeLater(action);
-	}
-
-	private JLabel createHeadingLabel(String text)
-	{
-		JLabel label = new JLabel(text);
-		label.setForeground(TITLE_COLOR);
-		label.setFont(label.getFont().deriveFont(Font.BOLD, 12f));
-		return label;
-	}
-
-	private void styleValueLabel(JLabel label)
-	{
-		label.setForeground(BODY_COLOR);
-		label.setFont(label.getFont().deriveFont(Font.PLAIN, 12f));
 	}
 
 	private JLabel createEmptyStateLabel()
@@ -446,27 +416,27 @@ public class ProgressPanel extends PluginPanel
 		switch (event.getType())
 		{
 			case "LEVEL_UP":
-				resourceName = "skills icon.png";
+				resourceName = "Skills_icon.png";
 				fallbackText = "Lv";
 				fallbackColor = new Color(88, 145, 94);
 				break;
 			case "COLLECTION_LOG":
-				resourceName = "collection log detail.png";
+				resourceName = "Collection_log_detail.png";
 				fallbackText = "CL";
 				fallbackColor = new Color(140, 104, 66);
 				break;
 			case "COMBAT_TASK_COMPLETE":
-				resourceName = "combat icon.png";
+				resourceName = "Combat_icon.png";
 				fallbackText = "CT";
 				fallbackColor = new Color(154, 70, 70);
 				break;
 			case "BOSS_DROP":
-				resourceName = "coins detail .png";
+				resourceName = "Coins_detail.png";
 				fallbackText = "GP";
 				fallbackColor = new Color(166, 142, 54);
 				break;
 			case "BOSS_KC":
-				resourceName = "boss kc icon.png";
+				resourceName = "Slayer_icon.png";
 				fallbackText = "KC";
 				fallbackColor = new Color(92, 117, 168);
 				break;

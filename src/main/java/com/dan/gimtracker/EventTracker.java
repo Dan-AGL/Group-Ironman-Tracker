@@ -17,7 +17,7 @@ import net.runelite.api.events.StatChanged;
 
 public class EventTracker
 {
-	private static final int MAX_RECENT_EVENTS = 5;
+	private static final int MAX_RECENT_EVENTS = 20;
 
 	private final Map<Skill, Integer> lastKnownLevels = new EnumMap<>(Skill.class);
 	private final Map<String, Integer> lastReportedBossCounts = new HashMap<>();

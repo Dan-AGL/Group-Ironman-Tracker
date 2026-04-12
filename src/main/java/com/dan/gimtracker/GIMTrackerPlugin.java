@@ -23,6 +23,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -53,6 +56,7 @@ import org.slf4j.LoggerFactory;
 public class GIMTrackerPlugin extends Plugin
 {
 	private static final Logger log = LoggerFactory.getLogger(GIMTrackerPlugin.class);
+	private static final int MAX_DISPLAY_EVENTS = 20;
 	private static final Duration MIN_SYNC_INTERVAL = Duration.ofSeconds(5);
 	private static final Pattern BOSS_COUNT_MESSAGE = Pattern.compile(
 		"Your (.+?) (kill count|completion count) is:? ([\\d,]+)\\.?$"
@@ -94,6 +98,7 @@ public class GIMTrackerPlugin extends Plugin
 	private NavigationButton navigationButton;
 	private Instant lastSyncAttempt = Instant.EPOCH;
 	private List<TrackedEvent> persistedRecentEvents = List.of();
+	private volatile Set<String> currentGroupMembers = Set.of();
 
 	// Creates the sidebar entry point, initializes the panel state, and seeds tracking if already logged in.
 	@Override
@@ -343,6 +348,11 @@ public class GIMTrackerPlugin extends Plugin
 		}
 
 		String playerName = matcher.group(1);
+		if (!isCurrentGroupMember(playerName))
+		{
+			return false;
+		}
+
 		String itemName = matcher.group(2);
 		int unlockedCount = Integer.parseInt(matcher.group(3).replace(",", ""));
 		int totalCount = Integer.parseInt(matcher.group(4).replace(",", ""));
@@ -531,6 +541,7 @@ public class GIMTrackerPlugin extends Plugin
 			progressPanel.updateGroup(config.groupName(), "");
 			progressPanel.updateMembers(List.of());
 			persistedRecentEvents = List.of();
+			currentGroupMembers = Set.of();
 			refreshPanel();
 			return;
 		}
@@ -542,6 +553,11 @@ public class GIMTrackerPlugin extends Plugin
 				GroupResponse group = syncService.fetchGroup(config.apiBaseUrl(), inviteCode);
 				List<GroupMemberResponse> members = syncService.fetchMembers(config.apiBaseUrl(), inviteCode);
 				saveGroup(group);
+				currentGroupMembers = members.stream()
+					.map(GroupMemberResponse::getPlayerName)
+					.filter(name -> name != null && !name.isBlank())
+					.map(this::normalizePlayerName)
+					.collect(Collectors.toCollection(HashSet::new));
 				progressPanel.updateMembers(
 					members.stream()
 						.map(member -> member.getPlayerName() + " (" + member.getRole() + ")")
@@ -584,6 +600,7 @@ public class GIMTrackerPlugin extends Plugin
 				clearSavedGroup();
 				progressPanel.updateMembers(List.of());
 				persistedRecentEvents = List.of();
+				currentGroupMembers = Set.of();
 				progressPanel.updateStatus("Left group");
 				refreshPanel();
 			}
@@ -650,8 +667,36 @@ public class GIMTrackerPlugin extends Plugin
 
 		return combined.values()
 			.stream()
-			.limit(5)
+			.limit(MAX_DISPLAY_EVENTS)
 			.collect(Collectors.toList());
+	}
+
+	private boolean isCurrentGroupMember(String playerName)
+	{
+		String normalizedPlayerName = normalizePlayerName(playerName);
+		if (normalizedPlayerName.isEmpty())
+		{
+			return false;
+		}
+
+		Set<String> members = currentGroupMembers;
+		if (members.isEmpty())
+		{
+			Player localPlayer = client.getLocalPlayer();
+			return localPlayer != null && normalizedPlayerName.equals(normalizePlayerName(localPlayer.getName()));
+		}
+
+		return members.contains(normalizedPlayerName);
+	}
+
+	private String normalizePlayerName(String playerName)
+	{
+		if (playerName == null)
+		{
+			return "";
+		}
+
+		return playerName.trim().toLowerCase(Locale.ENGLISH);
 	}
 
 	private String eventKey(TrackedEvent event)
@@ -689,6 +734,7 @@ public class GIMTrackerPlugin extends Plugin
 	private List<TrackedEvent> collapsePersistedEvents(List<TrackedEvent> events)
 	{
 		List<TrackedEvent> collapsed = new ArrayList<>();
+		Map<String, Integer> activeBossKcIndexes = new LinkedHashMap<>();
 		for (TrackedEvent event : events)
 		{
 			if (!"BOSS_KC".equals(event.getType()))
@@ -697,25 +743,51 @@ public class GIMTrackerPlugin extends Plugin
 				continue;
 			}
 
-			if (collapsed.isEmpty())
+			String streamKey = bossKcStreamKey(event);
+			Integer existingIndex = activeBossKcIndexes.get(streamKey);
+			if (existingIndex == null)
 			{
+				activeBossKcIndexes.put(streamKey, collapsed.size());
 				collapsed.add(event);
 				continue;
 			}
 
-			TrackedEvent previous = collapsed.get(collapsed.size() - 1);
+			TrackedEvent previous = collapsed.get(existingIndex);
 			if (isSameBossKcSession(previous, event))
 			{
-				collapsed.set(collapsed.size() - 1, event);
+				collapsed.remove((int) existingIndex);
+				collapsed.add(event);
+				reindexBossKcStreams(activeBossKcIndexes, existingIndex);
+				activeBossKcIndexes.put(streamKey, collapsed.size() - 1);
 			}
 			else
 			{
+				activeBossKcIndexes.put(streamKey, collapsed.size());
 				collapsed.add(event);
 			}
 		}
 
 		Collections.reverse(collapsed);
 		return collapsed;
+	}
+
+	private void reindexBossKcStreams(Map<String, Integer> activeBossKcIndexes, int removedIndex)
+	{
+		for (Map.Entry<String, Integer> entry : activeBossKcIndexes.entrySet())
+		{
+			if (entry.getValue() > removedIndex)
+			{
+				entry.setValue(entry.getValue() - 1);
+			}
+		}
+	}
+
+	private String bossKcStreamKey(TrackedEvent event)
+	{
+		Map<String, Object> details = event.getDetails();
+		return String.valueOf(details.get("playerName")) + "|"
+			+ String.valueOf(details.get("bossName")) + "|"
+			+ String.valueOf(details.get("countType"));
 	}
 
 	private boolean isSameBossKcSession(TrackedEvent previous, TrackedEvent current)

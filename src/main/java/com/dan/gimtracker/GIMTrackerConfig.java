@@ -36,7 +36,7 @@ public interface GIMTrackerConfig extends Config
 	)
 	default String apiBaseUrl()
 	{
-		return "http://localhost:8080";
+		return "http://Group-Ironman-Tracker-env.eba-rmummppd.ap-southeast-2.elasticbeanstalk.com";
 	}
 
 	// Controls how often queued events should be flushed automatically.
