@@ -7,6 +7,7 @@ import com.dan.gimtracker.model.GroupResponse;
 import com.dan.gimtracker.model.JoinGroupRequest;
 import com.dan.gimtracker.model.LeaveGroupRequest;
 import com.dan.gimtracker.model.ProgressUploadRequest;
+import com.dan.gimtracker.model.RemoveGroupMemberRequest;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import java.io.IOException;
@@ -65,6 +66,16 @@ public class SyncService
 		RequestBody body = RequestBody.create(JSON, gson.toJson(request));
 		Request httpRequest = new Request.Builder()
 			.url(normalizeBaseUrl(apiBaseUrl) + "/api/groups/leave")
+			.post(body)
+			.build();
+		executeNoContent(httpRequest);
+	}
+
+	public void removeGroupMember(String apiBaseUrl, RemoveGroupMemberRequest request) throws IOException
+	{
+		RequestBody body = RequestBody.create(JSON, gson.toJson(request));
+		Request httpRequest = new Request.Builder()
+			.url(normalizeBaseUrl(apiBaseUrl) + "/api/groups/remove-member")
 			.post(body)
 			.build();
 		executeNoContent(httpRequest);

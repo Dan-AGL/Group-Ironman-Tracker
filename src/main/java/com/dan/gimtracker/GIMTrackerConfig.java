@@ -11,7 +11,8 @@ public interface GIMTrackerConfig extends Config
 	@ConfigItem(
 		keyName = "groupCode",
 		name = "Invite Code",
-		description = "Invite code used to join a shared group"
+		description = "Invite code used to join a shared group",
+		secret = true
 	)
 	default String groupCode()
 	{
@@ -26,28 +27,6 @@ public interface GIMTrackerConfig extends Config
 	default String groupName()
 	{
 		return "";
-	}
-
-	// Points the plugin at the backend that receives progress payloads.
-	@ConfigItem(
-		keyName = "apiBaseUrl",
-		name = "API Base URL",
-		description = "Base URL for the backend that receives progress uploads"
-	)
-	default String apiBaseUrl()
-	{
-		return "http://Group-Ironman-Tracker-env.eba-rmummppd.ap-southeast-2.elasticbeanstalk.com";
-	}
-
-	// Controls how often queued events should be flushed automatically.
-	@ConfigItem(
-		keyName = "syncIntervalSeconds",
-		name = "Sync Interval",
-		description = "How often pending tracked events should be uploaded automatically"
-	)
-	default int syncIntervalSeconds()
-	{
-		return 30;
 	}
 
 	// Sets the minimum boss KC/completion count before those events are queued for syncing.
@@ -70,16 +49,5 @@ public interface GIMTrackerConfig extends Config
 	default int dropValueThreshold()
 	{
 		return 2000;
-	}
-
-	// Exposes temporary testing controls so tracked events can be validated without gameplay.
-	@ConfigItem(
-		keyName = "developerMode",
-		name = "Developer Mode",
-		description = "Show temporary testing controls in the panel"
-	)
-	default boolean developerMode()
-	{
-		return false;
 	}
 }

@@ -15,19 +15,22 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import javax.imageio.ImageIO;
+import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
-import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.ImageIcon;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPasswordField;
 import javax.swing.JScrollPane;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
+import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
 import net.runelite.client.ui.PluginPanel;
 
@@ -50,13 +53,13 @@ public class ProgressPanel extends PluginPanel
 	private Runnable createGroupAction = () -> { };
 	private Runnable leaveGroupAction = () -> { };
 	private Runnable joinGroupAction = () -> { };
-	private Runnable showMembersAction = () -> { };
-	private List<String> currentMembers = List.of();
+	private Runnable showMembersAction = () -> showMembersDialog();
+	private Consumer<String> removeMemberAction = memberName -> { };
+	private List<GroupMemberView> currentMembers = List.of();
+	private boolean canRemoveMembers;
+	private String localPlayerName = "";
 
-	// Builds the small sidebar with sync status and a scrollable recent-event feed.
-	public ProgressPanel(
-		boolean developerMode
-	)
+	public ProgressPanel()
 	{
 		setLayout(new BorderLayout());
 		setBackground(PANEL_BACKGROUND);
@@ -102,25 +105,20 @@ public class ProgressPanel extends PluginPanel
 		groupPanel.add(groupNameValue, BorderLayout.NORTH);
 		groupPanel.add(actionPanel, BorderLayout.SOUTH);
 
-		setDeveloperMode(developerMode);
-
 		add(groupPanel, BorderLayout.NORTH);
 		add(recentPanel, BorderLayout.CENTER);
 	}
 
-	// Retained for compatibility with the plugin refresh cycle; the queue count is no longer displayed.
 	public void updatePendingCount(int pendingCount)
 	{
 		runOnUiThread(() -> { });
 	}
 
-	// Converts the last successful sync timestamp into a short display value.
 	public void updateLastSync(Instant lastSync)
 	{
 		runOnUiThread(() -> { });
 	}
 
-	// Surfaces the current sync state so testing failures are visible without reading logs.
 	public void updateStatus(String status)
 	{
 		runOnUiThread(() -> { });
@@ -133,9 +131,14 @@ public class ProgressPanel extends PluginPanel
 		);
 	}
 
-	public void updateMembers(List<String> members)
+	public void updateMembers(List<GroupMemberView> members, boolean canRemoveMembers, String localPlayerName)
 	{
-		currentMembers = members;
+		runOnUiThread(() ->
+		{
+			currentMembers = members;
+			this.canRemoveMembers = canRemoveMembers;
+			this.localPlayerName = localPlayerName == null ? "" : localPlayerName;
+		});
 	}
 
 	public void setCreateGroupAction(Runnable createGroupAction)
@@ -153,6 +156,11 @@ public class ProgressPanel extends PluginPanel
 		this.leaveGroupAction = leaveGroupAction;
 	}
 
+	public void setRemoveMemberAction(Consumer<String> removeMemberAction)
+	{
+		this.removeMemberAction = removeMemberAction;
+	}
+
 	public void setShowMembersAction(Runnable showMembersAction)
 	{
 		this.showMembersAction = showMembersAction;
@@ -163,6 +171,21 @@ public class ProgressPanel extends PluginPanel
 		return JOptionPane.showInputDialog(this, prompt, title, JOptionPane.PLAIN_MESSAGE);
 	}
 
+	public String promptForSensitiveValue(String title, String prompt)
+	{
+		JPasswordField field = new JPasswordField();
+		JPanel panel = new JPanel(new BorderLayout(0, 8));
+		panel.add(new JLabel(prompt), BorderLayout.NORTH);
+		panel.add(field, BorderLayout.CENTER);
+		int result = JOptionPane.showConfirmDialog(this, panel, title, JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+		if (result != JOptionPane.OK_OPTION)
+		{
+			return null;
+		}
+
+		return new String(field.getPassword());
+	}
+
 	public boolean confirm(String title, String message)
 	{
 		return JOptionPane.showConfirmDialog(this, message, title, JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION;
@@ -170,13 +193,32 @@ public class ProgressPanel extends PluginPanel
 
 	public void showMembersDialog()
 	{
-		String message = currentMembers.isEmpty()
-			? "No members in this group yet."
-			: String.join("\n", currentMembers);
-		JOptionPane.showMessageDialog(this, message, "Group Members", JOptionPane.PLAIN_MESSAGE);
+		runOnUiThread(() ->
+		{
+			if (currentMembers.isEmpty())
+			{
+				JOptionPane.showMessageDialog(this, "No members in this group yet.", "Group Members", JOptionPane.PLAIN_MESSAGE);
+				return;
+			}
+
+			JPanel membersPanel = new JPanel();
+			membersPanel.setLayout(new BoxLayout(membersPanel, BoxLayout.Y_AXIS));
+			membersPanel.setBackground(PANEL_BACKGROUND);
+
+			for (GroupMemberView member : currentMembers)
+			{
+				membersPanel.add(createMemberRow(member));
+				membersPanel.add(Box.createVerticalStrut(6));
+			}
+
+			JScrollPane scrollPane = new JScrollPane(membersPanel);
+			scrollPane.setBorder(BorderFactory.createEmptyBorder());
+			scrollPane.getViewport().setBackground(PANEL_BACKGROUND);
+			scrollPane.setPreferredSize(new Dimension(280, Math.min(260, currentMembers.size() * 46)));
+			JOptionPane.showMessageDialog(this, scrollPane, "Group Members", JOptionPane.PLAIN_MESSAGE);
+		});
 	}
 
-	// Renders the latest tracked events in a compact block for quick validation during testing.
 	public void updateRecentEvents(List<TrackedEvent> events)
 	{
 		runOnUiThread(() ->
@@ -200,16 +242,6 @@ public class ProgressPanel extends PluginPanel
 
 			recentEventsContainer.revalidate();
 			recentEventsContainer.repaint();
-		});
-	}
-
-	// Keeps the action area consistent even though developer-mode-only test buttons were removed.
-	public void setDeveloperMode(boolean developerMode)
-	{
-		runOnUiThread(() ->
-		{
-			revalidate();
-			repaint();
 		});
 	}
 
@@ -242,6 +274,40 @@ public class ProgressPanel extends PluginPanel
 		button.setBorder(BorderFactory.createEmptyBorder(4, 0, 4, 0));
 		button.addActionListener(event -> action.run());
 		return button;
+	}
+
+	private JPanel createMemberRow(GroupMemberView member)
+	{
+		JPanel row = new JPanel(new BorderLayout(8, 0));
+		row.setBackground(CARD_BACKGROUND);
+		row.setBorder(new CompoundBorder(
+			BorderFactory.createLineBorder(CARD_BORDER),
+			BorderFactory.createEmptyBorder(6, 8, 6, 8)
+		));
+		row.setAlignmentX(Component.LEFT_ALIGNMENT);
+		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
+
+		JLabel nameLabel = new JLabel(member.getDisplayName());
+		nameLabel.setForeground(TITLE_COLOR);
+		row.add(nameLabel, BorderLayout.CENTER);
+
+		boolean removable = canRemoveMembers
+			&& !member.getPlayerName().equalsIgnoreCase(localPlayerName)
+			&& !"OWNER".equalsIgnoreCase(member.getRole());
+		if (removable)
+		{
+			JButton removeButton = createActionButton("-", "Remove " + member.getPlayerName() + " from the group", () ->
+			{
+				if (confirm("Remove Member", "Remove " + member.getPlayerName() + " from the group?"))
+				{
+					removeMemberAction.accept(member.getPlayerName());
+				}
+			});
+			removeButton.setPreferredSize(new Dimension(28, 24));
+			row.add(removeButton, BorderLayout.EAST);
+		}
+
+		return row;
 	}
 
 	private JPanel createEventCard(TrackedEvent event)
@@ -358,7 +424,7 @@ public class ProgressPanel extends PluginPanel
 		if ("COMBAT_TASK_COMPLETE".equals(type))
 		{
 			String tier = String.valueOf(details.get("tier"));
-			return (tier == null || tier.isBlank() ? "Combat task complete" : toTitleCase(tier) + " combat task complete");
+			return tier.isBlank() ? "Combat task complete" : toTitleCase(tier) + " combat task complete";
 		}
 		if ("BOSS_DROP".equals(type))
 		{
@@ -511,9 +577,9 @@ public class ProgressPanel extends PluginPanel
 		String lowerCase = text.toLowerCase();
 		String[] parts = lowerCase.split(" ");
 		StringBuilder builder = new StringBuilder();
-		for (int index = 0; index < parts.length; index++)
+		for (String part : parts)
 		{
-			if (parts[index].isEmpty())
+			if (part.isEmpty())
 			{
 				continue;
 			}
@@ -523,8 +589,8 @@ public class ProgressPanel extends PluginPanel
 				builder.append(' ');
 			}
 
-			builder.append(Character.toUpperCase(parts[index].charAt(0)));
-			builder.append(parts[index].substring(1));
+			builder.append(Character.toUpperCase(part.charAt(0)));
+			builder.append(part.substring(1));
 		}
 		return builder.toString();
 	}
@@ -532,5 +598,32 @@ public class ProgressPanel extends PluginPanel
 	private String asHtml(String text)
 	{
 		return "<html><body style='width:128px'>" + text + "</body></html>";
+	}
+
+	public static class GroupMemberView
+	{
+		private final String playerName;
+		private final String role;
+
+		public GroupMemberView(String playerName, String role)
+		{
+			this.playerName = playerName;
+			this.role = role;
+		}
+
+		public String getPlayerName()
+		{
+			return playerName;
+		}
+
+		public String getRole()
+		{
+			return role;
+		}
+
+		public String getDisplayName()
+		{
+			return playerName + " (" + role + ")";
+		}
 	}
 }

@@ -1,12 +1,13 @@
 package com.dan.gimtracker;
 
-import com.dan.gimtracker.model.ProgressUploadRequest;
 import com.dan.gimtracker.model.BackendEventResponse;
 import com.dan.gimtracker.model.CreateGroupRequest;
 import com.dan.gimtracker.model.GroupMemberResponse;
 import com.dan.gimtracker.model.GroupResponse;
 import com.dan.gimtracker.model.JoinGroupRequest;
 import com.dan.gimtracker.model.LeaveGroupRequest;
+import com.dan.gimtracker.model.ProgressUploadRequest;
+import com.dan.gimtracker.model.RemoveGroupMemberRequest;
 import com.dan.gimtracker.model.TrackedEvent;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -18,24 +19,24 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import javax.inject.Inject;
+import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Player;
-import net.runelite.api.ChatMessageType;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
@@ -56,8 +57,9 @@ import org.slf4j.LoggerFactory;
 public class GIMTrackerPlugin extends Plugin
 {
 	private static final Logger log = LoggerFactory.getLogger(GIMTrackerPlugin.class);
+	private static final String API_BASE_URL = "http://Group-Ironman-Tracker-env.eba-rmummppd.ap-southeast-2.elasticbeanstalk.com";
 	private static final int MAX_DISPLAY_EVENTS = 20;
-	private static final Duration MIN_SYNC_INTERVAL = Duration.ofSeconds(5);
+	private static final Duration SYNC_INTERVAL = Duration.ofSeconds(15);
 	private static final Pattern BOSS_COUNT_MESSAGE = Pattern.compile(
 		"Your (.+?) (kill count|completion count) is:? ([\\d,]+)\\.?$"
 	);
@@ -100,18 +102,16 @@ public class GIMTrackerPlugin extends Plugin
 	private List<TrackedEvent> persistedRecentEvents = List.of();
 	private volatile Set<String> currentGroupMembers = Set.of();
 
-	// Creates the sidebar entry point, initializes the panel state, and seeds tracking if already logged in.
 	@Override
 	protected void startUp() throws Exception
 	{
 		log.debug("Group Ironman Tracker started");
-		progressPanel = new ProgressPanel(
-			config.developerMode()
-		);
+		progressPanel = new ProgressPanel();
 		progressPanel.setCreateGroupAction(this::createGroup);
 		progressPanel.setLeaveGroupAction(this::leaveGroup);
 		progressPanel.setJoinGroupAction(this::joinGroup);
-		progressPanel.setShowMembersAction(() -> progressPanel.showMembersDialog());
+		progressPanel.setShowMembersAction(this::showGroupMembers);
+		progressPanel.setRemoveMemberAction(this::removeMember);
 		navigationButton = NavigationButton.builder()
 			.tooltip("Group Ironman Tracker")
 			.icon(createToolbarIcon())
@@ -131,7 +131,6 @@ public class GIMTrackerPlugin extends Plugin
 		}
 	}
 
-	// Flushes pending work on shutdown and removes the sidebar integration cleanly.
 	@Override
 	protected void shutDown() throws Exception
 	{
@@ -141,7 +140,6 @@ public class GIMTrackerPlugin extends Plugin
 		syncExecutor.shutdownNow();
 	}
 
-	// Resets tracking on login and attempts a final sync when returning to the login screen.
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged gameStateChanged)
 	{
@@ -167,7 +165,6 @@ public class GIMTrackerPlugin extends Plugin
 		}
 	}
 
-	// Converts stat changes into queued level-up events when the player's real level increases.
 	@Subscribe
 	public void onStatChanged(StatChanged event)
 	{
@@ -184,7 +181,6 @@ public class GIMTrackerPlugin extends Plugin
 		}
 	}
 
-	// Parses boss KC and raid completion chat messages into queued events once they clear the configured threshold.
 	@Subscribe
 	public void onChatMessage(ChatMessage event)
 	{
@@ -209,28 +205,9 @@ public class GIMTrackerPlugin extends Plugin
 			return;
 		}
 
-		if (tryCaptureCollectionLogEvent(message, event.getType()))
-		{
-			return;
-		}
-
-		if (config.developerMode() && message.toLowerCase().contains("drop"))
-		{
-			log.debug("Unmatched drop chat [{}]: {}", event.getType(), message);
-		}
-
-		if (config.developerMode() && message.toLowerCase().contains("combat achievement"))
-		{
-			log.debug("Unmatched combat task chat [{}]: {}", event.getType(), message);
-		}
-
-		if (config.developerMode() && message.toLowerCase().contains("collection log"))
-		{
-			log.debug("Unmatched collection log chat [{}]: {}", event.getType(), message);
-		}
+		tryCaptureCollectionLogEvent(message, event.getType());
 	}
 
-	// Extracts boss KC and completion events from game chat messages.
 	private boolean tryCaptureBossCountEvent(String message)
 	{
 		Matcher matcher = BOSS_COUNT_MESSAGE.matcher(message);
@@ -262,7 +239,6 @@ public class GIMTrackerPlugin extends Plugin
 		return !newEvents.isEmpty();
 	}
 
-	// Extracts boss drop events from game, clan, or group-style chat messages when the value is high enough.
 	private boolean tryCaptureBossDropEvent(String message, ChatMessageType messageType)
 	{
 		Matcher matcher = BOSS_DROP_MESSAGE.matcher(message);
@@ -295,7 +271,6 @@ public class GIMTrackerPlugin extends Plugin
 		return !newEvents.isEmpty();
 	}
 
-	// Extracts combat task completions from chat messages and de-duplicates them within the session.
 	private boolean tryCaptureCombatTaskEvent(String message, ChatMessageType messageType)
 	{
 		String taskName;
@@ -338,7 +313,6 @@ public class GIMTrackerPlugin extends Plugin
 		return !newEvents.isEmpty();
 	}
 
-	// Extracts collection-log unlocks from chat messages and de-duplicates them within the session.
 	private boolean tryCaptureCollectionLogEvent(String message, ChatMessageType messageType)
 	{
 		Matcher matcher = COLLECTION_LOG_MESSAGE.matcher(message);
@@ -374,7 +348,6 @@ public class GIMTrackerPlugin extends Plugin
 		return !newEvents.isEmpty();
 	}
 
-	// Periodically flushes queued events instead of sending one request per RuneLite event.
 	@Subscribe
 	public void onGameTick(GameTick event)
 	{
@@ -383,21 +356,18 @@ public class GIMTrackerPlugin extends Plugin
 			return;
 		}
 
-		Duration syncInterval = Duration.ofSeconds(Math.max(config.syncIntervalSeconds(), MIN_SYNC_INTERVAL.getSeconds()));
-		if (Duration.between(lastSyncAttempt, Instant.now()).compareTo(syncInterval) >= 0)
+		if (Duration.between(lastSyncAttempt, Instant.now()).compareTo(SYNC_INTERVAL) >= 0)
 		{
 			flushPendingEvents("timer");
 		}
 	}
 
-	// Exposes the plugin config to RuneLite's config manager.
 	@Provides
 	GIMTrackerConfig provideConfig(ConfigManager configManager)
 	{
 		return configManager.getConfig(GIMTrackerConfig.class);
 	}
 
-	// Moves queued events into an upload request and sends them off-thread so the client stays responsive.
 	private void flushPendingEvents(String reason)
 	{
 		if (config.groupCode().isBlank())
@@ -431,7 +401,7 @@ public class GIMTrackerPlugin extends Plugin
 		{
 			try
 			{
-				boolean success = syncService.sendEvents(config.apiBaseUrl(), request);
+				boolean success = syncService.sendEvents(API_BASE_URL, request);
 				if (!success)
 				{
 					eventTracker.requeue(events);
@@ -445,7 +415,7 @@ public class GIMTrackerPlugin extends Plugin
 					refreshPersistedEvents();
 				}
 			}
-			catch (IOException ex)
+			catch (IOException | IllegalArgumentException ex)
 			{
 				eventTracker.requeue(events);
 				log.warn("Sync failed during {}", reason, ex);
@@ -456,7 +426,6 @@ public class GIMTrackerPlugin extends Plugin
 		});
 	}
 
-	// Pushes the latest tracker and sync state into the sidebar.
 	private void refreshPanel()
 	{
 		if (progressPanel == null)
@@ -464,7 +433,6 @@ public class GIMTrackerPlugin extends Plugin
 			return;
 		}
 
-		progressPanel.setDeveloperMode(config.developerMode());
 		progressPanel.updatePendingCount(eventTracker.getPendingCount());
 		progressPanel.updateLastSync(syncService.getLastSuccessfulSync());
 		progressPanel.updateRecentEvents(buildDisplayEvents());
@@ -487,14 +455,14 @@ public class GIMTrackerPlugin extends Plugin
 			try
 			{
 				GroupResponse group = syncService.createGroup(
-					config.apiBaseUrl(),
+					API_BASE_URL,
 					new CreateGroupRequest(groupName.trim(), playerName)
 				);
 				saveGroup(group);
 				progressPanel.updateStatus("Created group " + group.getName());
 				refreshGroupDetails();
 			}
-			catch (IOException ex)
+			catch (IOException | IllegalArgumentException ex)
 			{
 				log.warn("Failed to create group", ex);
 				progressPanel.updateStatus("Group create failed");
@@ -506,7 +474,7 @@ public class GIMTrackerPlugin extends Plugin
 	{
 		Player localPlayer = client.getLocalPlayer();
 		String playerName = localPlayer == null ? "" : localPlayer.getName();
-		String inviteCode = progressPanel.promptForValue("Join Group", "Enter the invite code");
+		String inviteCode = progressPanel.promptForSensitiveValue("Join Group", "Enter the invite code");
 		if (inviteCode == null || inviteCode.trim().isEmpty() || playerName.isBlank())
 		{
 			return;
@@ -518,14 +486,14 @@ public class GIMTrackerPlugin extends Plugin
 			try
 			{
 				GroupResponse group = syncService.joinGroup(
-					config.apiBaseUrl(),
+					API_BASE_URL,
 					new JoinGroupRequest(inviteCode.trim(), playerName)
 				);
 				saveGroup(group);
 				progressPanel.updateStatus("Joined " + group.getName());
 				refreshGroupDetails();
 			}
-			catch (IOException ex)
+			catch (IOException | IllegalArgumentException ex)
 			{
 				log.warn("Failed to join group", ex);
 				progressPanel.updateStatus("Group join failed");
@@ -539,7 +507,7 @@ public class GIMTrackerPlugin extends Plugin
 		if (inviteCode.isBlank())
 		{
 			progressPanel.updateGroup(config.groupName(), "");
-			progressPanel.updateMembers(List.of());
+			progressPanel.updateMembers(List.of(), false, "");
 			persistedRecentEvents = List.of();
 			currentGroupMembers = Set.of();
 			refreshPanel();
@@ -550,9 +518,14 @@ public class GIMTrackerPlugin extends Plugin
 		{
 			try
 			{
-				GroupResponse group = syncService.fetchGroup(config.apiBaseUrl(), inviteCode);
-				List<GroupMemberResponse> members = syncService.fetchMembers(config.apiBaseUrl(), inviteCode);
+				GroupResponse group = syncService.fetchGroup(API_BASE_URL, inviteCode);
+				List<GroupMemberResponse> members = syncService.fetchMembers(API_BASE_URL, inviteCode);
 				saveGroup(group);
+				Player localPlayer = client.getLocalPlayer();
+				String localPlayerName = localPlayer == null ? "" : localPlayer.getName();
+				boolean canRemoveMembers = members.stream().anyMatch(member ->
+					"OWNER".equalsIgnoreCase(member.getRole()) && member.getPlayerName().equalsIgnoreCase(localPlayerName)
+				);
 				currentGroupMembers = members.stream()
 					.map(GroupMemberResponse::getPlayerName)
 					.filter(name -> name != null && !name.isBlank())
@@ -560,15 +533,58 @@ public class GIMTrackerPlugin extends Plugin
 					.collect(Collectors.toCollection(HashSet::new));
 				progressPanel.updateMembers(
 					members.stream()
-						.map(member -> member.getPlayerName() + " (" + member.getRole() + ")")
-						.collect(Collectors.toList())
+						.map(member -> new ProgressPanel.GroupMemberView(member.getPlayerName(), member.getRole()))
+						.collect(Collectors.toList()),
+					canRemoveMembers,
+					localPlayerName
 				);
 				refreshPersistedEvents();
 			}
-			catch (IOException ex)
+			catch (IOException | IllegalArgumentException ex)
 			{
 				log.warn("Failed to refresh group details", ex);
 				progressPanel.updateStatus("Group refresh failed");
+			}
+		});
+	}
+
+	private void showGroupMembers()
+	{
+		String inviteCode = config.groupCode();
+		if (inviteCode.isBlank())
+		{
+			progressPanel.showMembersDialog();
+			return;
+		}
+
+		syncExecutor.submit(() ->
+		{
+			try
+			{
+				List<GroupMemberResponse> members = syncService.fetchMembers(API_BASE_URL, inviteCode);
+				Player localPlayer = client.getLocalPlayer();
+				String localPlayerName = localPlayer == null ? "" : localPlayer.getName();
+				boolean canRemoveMembers = members.stream().anyMatch(member ->
+					"OWNER".equalsIgnoreCase(member.getRole()) && member.getPlayerName().equalsIgnoreCase(localPlayerName)
+				);
+				currentGroupMembers = members.stream()
+					.map(GroupMemberResponse::getPlayerName)
+					.filter(name -> name != null && !name.isBlank())
+					.map(this::normalizePlayerName)
+					.collect(Collectors.toCollection(HashSet::new));
+				progressPanel.updateMembers(
+					members.stream()
+						.map(member -> new ProgressPanel.GroupMemberView(member.getPlayerName(), member.getRole()))
+						.collect(Collectors.toList()),
+					canRemoveMembers,
+					localPlayerName
+				);
+				progressPanel.showMembersDialog();
+			}
+			catch (IOException | IllegalArgumentException ex)
+			{
+				log.warn("Failed to fetch group members", ex);
+				progressPanel.updateStatus("Group members refresh failed");
 			}
 		});
 	}
@@ -582,7 +598,10 @@ public class GIMTrackerPlugin extends Plugin
 			return;
 		}
 
-		boolean confirmed = progressPanel.confirm("Leave Group", "Leave " + config.groupName() + "?");
+		boolean confirmed = progressPanel.confirm(
+			"Leave Group",
+			"Are you sure you want to leave " + config.groupName() + "?"
+		);
 		if (!confirmed)
 		{
 			return;
@@ -594,20 +613,49 @@ public class GIMTrackerPlugin extends Plugin
 			try
 			{
 				syncService.leaveGroup(
-					config.apiBaseUrl(),
+					API_BASE_URL,
 					new LeaveGroupRequest(config.groupCode(), playerName)
 				);
 				clearSavedGroup();
-				progressPanel.updateMembers(List.of());
+				progressPanel.updateMembers(List.of(), false, "");
 				persistedRecentEvents = List.of();
 				currentGroupMembers = Set.of();
 				progressPanel.updateStatus("Left group");
 				refreshPanel();
 			}
-			catch (IOException ex)
+			catch (IOException | IllegalArgumentException ex)
 			{
 				log.warn("Failed to leave group", ex);
 				progressPanel.updateStatus("Leave group failed");
+			}
+		});
+	}
+
+	private void removeMember(String memberName)
+	{
+		Player localPlayer = client.getLocalPlayer();
+		String ownerPlayerName = localPlayer == null ? "" : localPlayer.getName();
+		if (config.groupCode().isBlank() || ownerPlayerName.isBlank() || memberName == null || memberName.isBlank())
+		{
+			return;
+		}
+
+		progressPanel.updateStatus("Removing member...");
+		syncExecutor.submit(() ->
+		{
+			try
+			{
+				syncService.removeGroupMember(
+					API_BASE_URL,
+					new RemoveGroupMemberRequest(config.groupCode(), ownerPlayerName, memberName)
+				);
+				progressPanel.updateStatus("Removed " + memberName);
+				refreshGroupDetails();
+			}
+			catch (IOException | IllegalArgumentException ex)
+			{
+				log.warn("Failed to remove member {}", memberName, ex);
+				progressPanel.updateStatus("Remove member failed");
 			}
 		});
 	}
@@ -636,14 +684,14 @@ public class GIMTrackerPlugin extends Plugin
 
 		try
 		{
-			List<BackendEventResponse> backendEvents = syncService.fetchGroupEvents(config.apiBaseUrl(), inviteCode);
+			List<BackendEventResponse> backendEvents = syncService.fetchGroupEvents(API_BASE_URL, inviteCode);
 			persistedRecentEvents = collapsePersistedEvents(backendEvents.stream()
 				.map(this::toTrackedEvent)
 				.filter(event -> event != null)
 				.collect(Collectors.toList()));
 			refreshPanel();
 		}
-		catch (IOException ex)
+		catch (IOException | IllegalArgumentException ex)
 		{
 			log.warn("Failed to refresh persisted events", ex);
 			progressPanel.updateStatus("History refresh failed");
@@ -842,7 +890,6 @@ public class GIMTrackerPlugin extends Plugin
 		}
 	}
 
-	// Generates a simple in-code toolbar icon so the plugin does not depend on external image assets yet.
 	private BufferedImage createToolbarIcon()
 	{
 		BufferedImage image = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
