@@ -29,6 +29,18 @@ public interface GIMTrackerConfig extends Config
 		return "";
 	}
 
+	@ConfigItem(
+		keyName = "sessionToken",
+		name = "Session Token",
+		description = "Session token issued by the backend after authentication",
+		secret = true,
+		hidden = true
+	)
+	default String sessionToken()
+	{
+		return "";
+	}
+
 	// Sets the minimum boss KC/completion count before those events are queued for syncing.
 	@ConfigItem(
 		keyName = "bossKillCountThreshold",

@@ -54,7 +54,10 @@ public class ProgressPanel extends PluginPanel
 	private Runnable leaveGroupAction = () -> { };
 	private Runnable joinGroupAction = () -> { };
 	private Runnable showMembersAction = () -> showMembersDialog();
+	private Runnable showAuthCodeAction = () -> { };
+	private Runnable authenticateWithAuthCodeAction = () -> { };
 	private Consumer<String> removeMemberAction = memberName -> { };
+	private Consumer<String> resetMemberAuthCodeAction = memberName -> { };
 	private List<GroupMemberView> currentMembers = List.of();
 	private boolean canRemoveMembers;
 	private String localPlayerName = "";
@@ -97,10 +100,14 @@ public class ProgressPanel extends PluginPanel
 		JButton createButton = createActionButton("+", "Create a new group", () -> createGroupAction.run());
 		JButton leaveButton = createActionButton("-", "Leave the current group", () -> leaveGroupAction.run());
 		JButton membersButton = createActionButton("M", "Show current group members", () -> showMembersAction.run());
+		JButton authCodeButton = createActionButton("C", "Show my member auth code", () -> showAuthCodeAction.run());
+		JButton authenticateButton = createActionButton("A", "Authenticate with a saved member auth code", () -> authenticateWithAuthCodeAction.run());
 		JButton joinButton = createActionButton("J", "Join a group with an invite code", () -> joinGroupAction.run());
 		actionPanel.add(createButton);
 		actionPanel.add(leaveButton);
 		actionPanel.add(membersButton);
+		actionPanel.add(authCodeButton);
+		actionPanel.add(authenticateButton);
 		actionPanel.add(joinButton);
 		groupPanel.add(groupNameValue, BorderLayout.NORTH);
 		groupPanel.add(actionPanel, BorderLayout.SOUTH);
@@ -166,6 +173,21 @@ public class ProgressPanel extends PluginPanel
 		this.showMembersAction = showMembersAction;
 	}
 
+	public void setShowAuthCodeAction(Runnable showAuthCodeAction)
+	{
+		this.showAuthCodeAction = showAuthCodeAction;
+	}
+
+	public void setAuthenticateWithAuthCodeAction(Runnable authenticateWithAuthCodeAction)
+	{
+		this.authenticateWithAuthCodeAction = authenticateWithAuthCodeAction;
+	}
+
+	public void setResetMemberAuthCodeAction(Consumer<String> resetMemberAuthCodeAction)
+	{
+		this.resetMemberAuthCodeAction = resetMemberAuthCodeAction;
+	}
+
 	public String promptForValue(String title, String prompt)
 	{
 		return JOptionPane.showInputDialog(this, prompt, title, JOptionPane.PLAIN_MESSAGE);
@@ -189,6 +211,23 @@ public class ProgressPanel extends PluginPanel
 	public boolean confirm(String title, String message)
 	{
 		return JOptionPane.showConfirmDialog(this, message, title, JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION;
+	}
+
+	public void showMessage(String title, String message)
+	{
+		runOnUiThread(() -> JOptionPane.showMessageDialog(this, message, title, JOptionPane.PLAIN_MESSAGE));
+	}
+
+	public void showAuthCode(String playerName, String authCode)
+	{
+		runOnUiThread(() ->
+			JOptionPane.showMessageDialog(
+				this,
+				playerName + " auth code:\n" + authCode + "\n\nKeep this code safe if you change computers.",
+				"Member Auth Code",
+				JOptionPane.PLAIN_MESSAGE
+			)
+		);
 	}
 
 	public void showMembersDialog()
@@ -305,6 +344,32 @@ public class ProgressPanel extends PluginPanel
 			});
 			removeButton.setPreferredSize(new Dimension(28, 24));
 			row.add(removeButton, BorderLayout.EAST);
+		}
+
+		boolean resettable = canRemoveMembers
+			&& !member.getPlayerName().equalsIgnoreCase(localPlayerName);
+		if (resettable)
+		{
+			JButton resetButton = createActionButton("C", "Reset auth code for " + member.getPlayerName(), () ->
+			{
+				if (confirm("Reset Auth Code", "Reset the auth code for " + member.getPlayerName() + "?"))
+				{
+					resetMemberAuthCodeAction.accept(member.getPlayerName());
+				}
+			});
+			resetButton.setPreferredSize(new Dimension(28, 24));
+			JPanel eastPanel = new JPanel();
+			eastPanel.setLayout(new BoxLayout(eastPanel, BoxLayout.X_AXIS));
+			eastPanel.setBackground(CARD_BACKGROUND);
+			Component existingEast = ((BorderLayout) row.getLayout()).getLayoutComponent(BorderLayout.EAST);
+			if (existingEast != null)
+			{
+				row.remove(existingEast);
+				eastPanel.add(existingEast);
+				eastPanel.add(Box.createHorizontalStrut(4));
+			}
+			eastPanel.add(resetButton);
+			row.add(eastPanel, BorderLayout.EAST);
 		}
 
 		return row;

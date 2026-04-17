@@ -1,13 +1,19 @@
 package com.dan.gimtracker;
 
+import com.dan.gimtracker.model.AuthenticateMemberRequest;
+import com.dan.gimtracker.model.AuthenticatedGroupResponse;
 import com.dan.gimtracker.model.BackendEventResponse;
+import com.dan.gimtracker.model.BootstrapSessionRequest;
 import com.dan.gimtracker.model.CreateGroupRequest;
+import com.dan.gimtracker.model.GetMemberAuthCodeRequest;
 import com.dan.gimtracker.model.GroupMemberResponse;
 import com.dan.gimtracker.model.GroupResponse;
 import com.dan.gimtracker.model.JoinGroupRequest;
 import com.dan.gimtracker.model.LeaveGroupRequest;
+import com.dan.gimtracker.model.MemberAuthCodeResponse;
 import com.dan.gimtracker.model.ProgressUploadRequest;
 import com.dan.gimtracker.model.RemoveGroupMemberRequest;
+import com.dan.gimtracker.model.ResetMemberAuthCodeRequest;
 import com.dan.gimtracker.model.TrackedEvent;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -111,7 +117,10 @@ public class GIMTrackerPlugin extends Plugin
 		progressPanel.setLeaveGroupAction(this::leaveGroup);
 		progressPanel.setJoinGroupAction(this::joinGroup);
 		progressPanel.setShowMembersAction(this::showGroupMembers);
+		progressPanel.setShowAuthCodeAction(this::showMyAuthCode);
+		progressPanel.setAuthenticateWithAuthCodeAction(this::authenticateWithAuthCode);
 		progressPanel.setRemoveMemberAction(this::removeMember);
+		progressPanel.setResetMemberAuthCodeAction(this::resetMemberAuthCode);
 		navigationButton = NavigationButton.builder()
 			.tooltip("Group Ironman Tracker")
 			.icon(createToolbarIcon())
@@ -161,6 +170,9 @@ public class GIMTrackerPlugin extends Plugin
 			eventTracker.resetCollectionLogBaseline();
 			flushPendingEvents("logout");
 			progressPanel.updateStatus("Waiting for login");
+			progressPanel.updateMembers(List.of(), false, "");
+			persistedRecentEvents = List.of();
+			currentGroupMembers = Set.of();
 			refreshPanel();
 		}
 	}
@@ -377,6 +389,14 @@ public class GIMTrackerPlugin extends Plugin
 			return;
 		}
 
+		String sessionToken = config.sessionToken();
+		if (sessionToken.isBlank())
+		{
+			progressPanel.updateStatus("Authenticate with your auth code");
+			refreshPanel();
+			return;
+		}
+
 		List<TrackedEvent> events = eventTracker.drainPendingEvents();
 		if (events.isEmpty())
 		{
@@ -401,7 +421,7 @@ public class GIMTrackerPlugin extends Plugin
 		{
 			try
 			{
-				boolean success = syncService.sendEvents(API_BASE_URL, request);
+				boolean success = syncService.sendEvents(API_BASE_URL, sessionToken, request);
 				if (!success)
 				{
 					eventTracker.requeue(events);
@@ -436,11 +456,23 @@ public class GIMTrackerPlugin extends Plugin
 		progressPanel.updatePendingCount(eventTracker.getPendingCount());
 		progressPanel.updateLastSync(syncService.getLastSuccessfulSync());
 		progressPanel.updateRecentEvents(buildDisplayEvents());
-		progressPanel.updateGroup(config.groupName(), config.groupCode());
+		if (client.getGameState() == GameState.LOGGED_IN)
+		{
+			progressPanel.updateGroup(config.groupName(), config.groupCode());
+		}
+		else
+		{
+			progressPanel.updateGroup("Waiting for login", "");
+		}
 	}
 
 	private void createGroup()
 	{
+		if (!ensureLoggedIn("Create Group"))
+		{
+			return;
+		}
+
 		Player localPlayer = client.getLocalPlayer();
 		String playerName = localPlayer == null ? "" : localPlayer.getName();
 		String groupName = progressPanel.promptForValue("Create Group", "Enter a group name");
@@ -454,11 +486,11 @@ public class GIMTrackerPlugin extends Plugin
 		{
 			try
 			{
-				GroupResponse group = syncService.createGroup(
+				AuthenticatedGroupResponse group = syncService.createGroup(
 					API_BASE_URL,
 					new CreateGroupRequest(groupName.trim(), playerName)
 				);
-				saveGroup(group);
+				saveAuthenticatedGroup(group);
 				progressPanel.updateStatus("Created group " + group.getName());
 				refreshGroupDetails();
 			}
@@ -472,6 +504,11 @@ public class GIMTrackerPlugin extends Plugin
 
 	private void joinGroup()
 	{
+		if (!ensureLoggedIn("Join Group"))
+		{
+			return;
+		}
+
 		Player localPlayer = client.getLocalPlayer();
 		String playerName = localPlayer == null ? "" : localPlayer.getName();
 		String inviteCode = progressPanel.promptForSensitiveValue("Join Group", "Enter the invite code");
@@ -485,11 +522,11 @@ public class GIMTrackerPlugin extends Plugin
 		{
 			try
 			{
-				GroupResponse group = syncService.joinGroup(
+				AuthenticatedGroupResponse group = syncService.joinGroup(
 					API_BASE_URL,
 					new JoinGroupRequest(inviteCode.trim(), playerName)
 				);
-				saveGroup(group);
+				saveAuthenticatedGroup(group);
 				progressPanel.updateStatus("Joined " + group.getName());
 				refreshGroupDetails();
 			}
@@ -503,6 +540,15 @@ public class GIMTrackerPlugin extends Plugin
 
 	private void refreshGroupDetails()
 	{
+		if (client.getGameState() != GameState.LOGGED_IN)
+		{
+			progressPanel.updateMembers(List.of(), false, "");
+			persistedRecentEvents = List.of();
+			currentGroupMembers = Set.of();
+			refreshPanel();
+			return;
+		}
+
 		String inviteCode = config.groupCode();
 		if (inviteCode.isBlank())
 		{
@@ -514,12 +560,19 @@ public class GIMTrackerPlugin extends Plugin
 			return;
 		}
 
+		String sessionToken = config.sessionToken();
+		if (sessionToken.isBlank())
+		{
+			bootstrapSessionForCurrentPlayer(inviteCode);
+			return;
+		}
+
 		syncExecutor.submit(() ->
 		{
 			try
 			{
-				GroupResponse group = syncService.fetchGroup(API_BASE_URL, inviteCode);
-				List<GroupMemberResponse> members = syncService.fetchMembers(API_BASE_URL, inviteCode);
+				GroupResponse group = syncService.fetchGroup(API_BASE_URL, sessionToken, inviteCode);
+				List<GroupMemberResponse> members = syncService.fetchMembers(API_BASE_URL, sessionToken, inviteCode);
 				saveGroup(group);
 				Player localPlayer = client.getLocalPlayer();
 				String localPlayerName = localPlayer == null ? "" : localPlayer.getName();
@@ -550,10 +603,22 @@ public class GIMTrackerPlugin extends Plugin
 
 	private void showGroupMembers()
 	{
+		if (!ensureLoggedIn("Group Members"))
+		{
+			return;
+		}
+
 		String inviteCode = config.groupCode();
 		if (inviteCode.isBlank())
 		{
-			progressPanel.showMembersDialog();
+			progressPanel.showMessage("Group Members", "You are not currently in a group.");
+			return;
+		}
+
+		String sessionToken = config.sessionToken();
+		if (sessionToken.isBlank())
+		{
+			progressPanel.showMessage("Group Members", "Please authenticate with your member auth code first.");
 			return;
 		}
 
@@ -561,7 +626,7 @@ public class GIMTrackerPlugin extends Plugin
 		{
 			try
 			{
-				List<GroupMemberResponse> members = syncService.fetchMembers(API_BASE_URL, inviteCode);
+				List<GroupMemberResponse> members = syncService.fetchMembers(API_BASE_URL, sessionToken, inviteCode);
 				Player localPlayer = client.getLocalPlayer();
 				String localPlayerName = localPlayer == null ? "" : localPlayer.getName();
 				boolean canRemoveMembers = members.stream().anyMatch(member ->
@@ -589,12 +654,56 @@ public class GIMTrackerPlugin extends Plugin
 		});
 	}
 
-	private void leaveGroup()
+	private void showMyAuthCode()
 	{
+		if (!ensureLoggedIn("Member Auth Code"))
+		{
+			return;
+		}
+
 		Player localPlayer = client.getLocalPlayer();
 		String playerName = localPlayer == null ? "" : localPlayer.getName();
-		if (config.groupCode().isBlank() || playerName.isBlank())
+		String sessionToken = config.sessionToken();
+		if (config.groupCode().isBlank() || playerName.isBlank() || sessionToken.isBlank())
 		{
+			progressPanel.showMessage("Member Auth Code", "Please join a group and authenticate first.");
+			return;
+		}
+
+		progressPanel.updateStatus("Fetching auth code...");
+		syncExecutor.submit(() ->
+		{
+			try
+			{
+				MemberAuthCodeResponse response = syncService.getMemberAuthCode(
+					API_BASE_URL,
+					sessionToken,
+					new GetMemberAuthCodeRequest(config.groupCode(), playerName)
+				);
+				progressPanel.showAuthCode(response.getPlayerName(), response.getAuthCode());
+				progressPanel.updateStatus("Auth code ready");
+			}
+			catch (IOException | IllegalArgumentException ex)
+			{
+				log.warn("Failed to fetch auth code", ex);
+				progressPanel.updateStatus("Auth code fetch failed");
+			}
+		});
+	}
+
+	private void leaveGroup()
+	{
+		if (!ensureLoggedIn("Leave Group"))
+		{
+			return;
+		}
+
+		Player localPlayer = client.getLocalPlayer();
+		String playerName = localPlayer == null ? "" : localPlayer.getName();
+		String sessionToken = config.sessionToken();
+		if (config.groupCode().isBlank() || playerName.isBlank() || sessionToken.isBlank())
+		{
+			progressPanel.showMessage("Leave Group", "Please authenticate with your member auth code first.");
 			return;
 		}
 
@@ -614,6 +723,7 @@ public class GIMTrackerPlugin extends Plugin
 			{
 				syncService.leaveGroup(
 					API_BASE_URL,
+					sessionToken,
 					new LeaveGroupRequest(config.groupCode(), playerName)
 				);
 				clearSavedGroup();
@@ -633,10 +743,17 @@ public class GIMTrackerPlugin extends Plugin
 
 	private void removeMember(String memberName)
 	{
+		if (!ensureLoggedIn("Remove Member"))
+		{
+			return;
+		}
+
 		Player localPlayer = client.getLocalPlayer();
 		String ownerPlayerName = localPlayer == null ? "" : localPlayer.getName();
-		if (config.groupCode().isBlank() || ownerPlayerName.isBlank() || memberName == null || memberName.isBlank())
+		String sessionToken = config.sessionToken();
+		if (config.groupCode().isBlank() || ownerPlayerName.isBlank() || sessionToken.isBlank() || memberName == null || memberName.isBlank())
 		{
+			progressPanel.showMessage("Remove Member", "Please authenticate with your member auth code first.");
 			return;
 		}
 
@@ -647,6 +764,7 @@ public class GIMTrackerPlugin extends Plugin
 			{
 				syncService.removeGroupMember(
 					API_BASE_URL,
+					sessionToken,
 					new RemoveGroupMemberRequest(config.groupCode(), ownerPlayerName, memberName)
 				);
 				progressPanel.updateStatus("Removed " + memberName);
@@ -660,16 +778,61 @@ public class GIMTrackerPlugin extends Plugin
 		});
 	}
 
+	private void resetMemberAuthCode(String memberName)
+	{
+		if (!ensureLoggedIn("Reset Auth Code"))
+		{
+			return;
+		}
+
+		Player localPlayer = client.getLocalPlayer();
+		String ownerPlayerName = localPlayer == null ? "" : localPlayer.getName();
+		String sessionToken = config.sessionToken();
+		if (config.groupCode().isBlank() || ownerPlayerName.isBlank() || sessionToken.isBlank() || memberName == null || memberName.isBlank())
+		{
+			progressPanel.showMessage("Reset Auth Code", "Please authenticate with your member auth code first.");
+			return;
+		}
+
+		progressPanel.updateStatus("Resetting auth code...");
+		syncExecutor.submit(() ->
+		{
+			try
+			{
+				MemberAuthCodeResponse response = syncService.resetMemberAuthCode(
+					API_BASE_URL,
+					sessionToken,
+					new ResetMemberAuthCodeRequest(config.groupCode(), ownerPlayerName, memberName)
+				);
+				progressPanel.showAuthCode(response.getPlayerName(), response.getAuthCode());
+				progressPanel.updateStatus("Auth code reset");
+			}
+			catch (IOException | IllegalArgumentException ex)
+			{
+				log.warn("Failed to reset auth code for {}", memberName, ex);
+				progressPanel.updateStatus("Auth code reset failed");
+			}
+		});
+	}
+
 	private void saveGroup(GroupResponse group)
 	{
 		configManager.setConfiguration("gimtracker", "groupCode", group.getInviteCode());
 		configManager.setConfiguration("gimtracker", "groupName", group.getName());
 	}
 
+	private void saveAuthenticatedGroup(AuthenticatedGroupResponse group)
+	{
+		configManager.setConfiguration("gimtracker", "groupCode", group.getInviteCode());
+		configManager.setConfiguration("gimtracker", "groupName", group.getName());
+		configManager.setConfiguration("gimtracker", "sessionToken", group.getSessionToken());
+	}
+
 	private void clearSavedGroup()
 	{
 		configManager.setConfiguration("gimtracker", "groupCode", "");
 		configManager.setConfiguration("gimtracker", "groupName", "");
+		configManager.unsetConfiguration("gimtracker", "sessionToken");
 	}
 
 	private void refreshPersistedEvents()
@@ -684,7 +847,15 @@ public class GIMTrackerPlugin extends Plugin
 
 		try
 		{
-			List<BackendEventResponse> backendEvents = syncService.fetchGroupEvents(API_BASE_URL, inviteCode);
+			String sessionToken = config.sessionToken();
+			if (sessionToken.isBlank())
+			{
+				persistedRecentEvents = List.of();
+				refreshPanel();
+				return;
+			}
+
+			List<BackendEventResponse> backendEvents = syncService.fetchGroupEvents(API_BASE_URL, sessionToken, inviteCode);
 			persistedRecentEvents = collapsePersistedEvents(backendEvents.stream()
 				.map(this::toTrackedEvent)
 				.filter(event -> event != null)
@@ -902,4 +1073,101 @@ public class GIMTrackerPlugin extends Plugin
 		graphics.dispose();
 		return image;
 	}
+
+	private void authenticateWithAuthCode()
+	{
+		if (!ensureLoggedIn("Authenticate"))
+		{
+			return;
+		}
+
+		String inviteCode = config.groupCode();
+		if (inviteCode.isBlank())
+		{
+			inviteCode = progressPanel.promptForValue("Authenticate", "Enter the invite code");
+		}
+
+		if (inviteCode == null || inviteCode.trim().isEmpty())
+		{
+			return;
+		}
+
+		String authCode = progressPanel.promptForSensitiveValue("Authenticate", "Enter your member auth code");
+		if (authCode == null || authCode.trim().isEmpty())
+		{
+			return;
+		}
+
+		progressPanel.updateStatus("Authenticating...");
+		String normalizedInviteCode = inviteCode.trim();
+		syncExecutor.submit(() ->
+		{
+			try
+			{
+				AuthenticatedGroupResponse response = syncService.authenticateMember(
+					API_BASE_URL,
+					new AuthenticateMemberRequest(normalizedInviteCode, authCode.trim())
+				);
+				saveAuthenticatedGroup(response);
+				progressPanel.updateStatus("Authenticated as " + response.getPlayerName());
+				refreshGroupDetails();
+			}
+			catch (IOException | IllegalArgumentException ex)
+			{
+				log.warn("Failed to authenticate with auth code", ex);
+				progressPanel.updateStatus("Authentication failed");
+			}
+		});
+	}
+
+	private void bootstrapSessionForCurrentPlayer(String inviteCode)
+	{
+		Player localPlayer = client.getLocalPlayer();
+		String playerName = localPlayer == null ? "" : localPlayer.getName();
+		if (playerName.isBlank())
+		{
+			progressPanel.updateMembers(List.of(), false, "");
+			persistedRecentEvents = List.of();
+			currentGroupMembers = Set.of();
+			progressPanel.updateStatus("Authenticate with your auth code");
+			refreshPanel();
+			return;
+		}
+
+		progressPanel.updateStatus("Restoring session...");
+		syncExecutor.submit(() ->
+		{
+			try
+			{
+				AuthenticatedGroupResponse response = syncService.bootstrapSession(
+					API_BASE_URL,
+					new BootstrapSessionRequest(inviteCode, playerName)
+				);
+				saveAuthenticatedGroup(response);
+				progressPanel.updateStatus("Session restored");
+				refreshGroupDetails();
+			}
+			catch (IOException | IllegalArgumentException ex)
+			{
+				log.warn("Failed to bootstrap session for {}", playerName, ex);
+				progressPanel.updateMembers(List.of(), false, "");
+				persistedRecentEvents = List.of();
+				currentGroupMembers = Set.of();
+				progressPanel.updateStatus("Authenticate with your auth code");
+				refreshPanel();
+			}
+		});
+	}
+
+	private boolean ensureLoggedIn(String actionName)
+	{
+		if (client.getGameState() == GameState.LOGGED_IN && client.getLocalPlayer() != null)
+		{
+			return true;
+		}
+
+		progressPanel.showMessage(actionName, "Please log into your RuneLite character first.");
+		return false;
+	}
+
 }

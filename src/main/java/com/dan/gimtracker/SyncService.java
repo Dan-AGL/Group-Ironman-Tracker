@@ -1,13 +1,19 @@
 package com.dan.gimtracker;
 
-import com.dan.gimtracker.model.CreateGroupRequest;
+import com.dan.gimtracker.model.AuthenticateMemberRequest;
+import com.dan.gimtracker.model.AuthenticatedGroupResponse;
 import com.dan.gimtracker.model.BackendEventResponse;
+import com.dan.gimtracker.model.BootstrapSessionRequest;
+import com.dan.gimtracker.model.CreateGroupRequest;
+import com.dan.gimtracker.model.GetMemberAuthCodeRequest;
 import com.dan.gimtracker.model.GroupMemberResponse;
 import com.dan.gimtracker.model.GroupResponse;
 import com.dan.gimtracker.model.JoinGroupRequest;
 import com.dan.gimtracker.model.LeaveGroupRequest;
+import com.dan.gimtracker.model.MemberAuthCodeResponse;
 import com.dan.gimtracker.model.ProgressUploadRequest;
 import com.dan.gimtracker.model.RemoveGroupMemberRequest;
+import com.dan.gimtracker.model.ResetMemberAuthCodeRequest;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import java.io.IOException;
@@ -23,6 +29,7 @@ import okhttp3.Response;
 public class SyncService
 {
 	private static final MediaType JSON = MediaType.parse("application/json");
+	private static final String SESSION_HEADER = "X-GIM-Session";
 	private static final Type BACKEND_EVENT_LIST_TYPE = new TypeToken<List<BackendEventResponse>>() { }.getType();
 	private static final Type GROUP_MEMBER_LIST_TYPE = new TypeToken<List<GroupMemberResponse>>() { }.getType();
 
@@ -30,12 +37,12 @@ public class SyncService
 	private final Gson gson = new Gson();
 	private Instant lastSuccessfulSync;
 
-	// Sends the queued event payload to the backend and records the time of the latest successful upload.
-	public boolean sendEvents(String apiBaseUrl, ProgressUploadRequest request) throws IOException
+	public boolean sendEvents(String apiBaseUrl, String sessionToken, ProgressUploadRequest request) throws IOException
 	{
 		RequestBody body = RequestBody.create(JSON, gson.toJson(request));
 		Request httpRequest = new Request.Builder()
 			.url(normalizeBaseUrl(apiBaseUrl) + "/api/progress")
+			.header(SESSION_HEADER, sessionToken)
 			.post(body)
 			.build();
 
@@ -51,70 +58,87 @@ public class SyncService
 		}
 	}
 
-	public GroupResponse createGroup(String apiBaseUrl, CreateGroupRequest request) throws IOException
+	public AuthenticatedGroupResponse createGroup(String apiBaseUrl, CreateGroupRequest request) throws IOException
 	{
-		return postJson(normalizeBaseUrl(apiBaseUrl) + "/api/groups", request, GroupResponse.class);
+		return postJson(normalizeBaseUrl(apiBaseUrl) + "/api/groups", request, AuthenticatedGroupResponse.class);
 	}
 
-	public GroupResponse joinGroup(String apiBaseUrl, JoinGroupRequest request) throws IOException
+	public AuthenticatedGroupResponse joinGroup(String apiBaseUrl, JoinGroupRequest request) throws IOException
 	{
-		return postJson(normalizeBaseUrl(apiBaseUrl) + "/api/groups/join", request, GroupResponse.class);
+		return postJson(normalizeBaseUrl(apiBaseUrl) + "/api/groups/join", request, AuthenticatedGroupResponse.class);
 	}
 
-	public void leaveGroup(String apiBaseUrl, LeaveGroupRequest request) throws IOException
+	public AuthenticatedGroupResponse authenticateMember(String apiBaseUrl, AuthenticateMemberRequest request) throws IOException
 	{
-		RequestBody body = RequestBody.create(JSON, gson.toJson(request));
-		Request httpRequest = new Request.Builder()
-			.url(normalizeBaseUrl(apiBaseUrl) + "/api/groups/leave")
-			.post(body)
-			.build();
-		executeNoContent(httpRequest);
+		return postJson(normalizeBaseUrl(apiBaseUrl) + "/api/groups/authenticate-member", request, AuthenticatedGroupResponse.class);
 	}
 
-	public void removeGroupMember(String apiBaseUrl, RemoveGroupMemberRequest request) throws IOException
+	public AuthenticatedGroupResponse bootstrapSession(String apiBaseUrl, BootstrapSessionRequest request) throws IOException
 	{
-		RequestBody body = RequestBody.create(JSON, gson.toJson(request));
-		Request httpRequest = new Request.Builder()
-			.url(normalizeBaseUrl(apiBaseUrl) + "/api/groups/remove-member")
-			.post(body)
-			.build();
-		executeNoContent(httpRequest);
+		return postJson(normalizeBaseUrl(apiBaseUrl) + "/api/groups/bootstrap-session", request, AuthenticatedGroupResponse.class);
 	}
 
-	public GroupResponse fetchGroup(String apiBaseUrl, String inviteCode) throws IOException
+	public void leaveGroup(String apiBaseUrl, String sessionToken, LeaveGroupRequest request) throws IOException
+	{
+		executeNoContent(postRequestWithSession(normalizeBaseUrl(apiBaseUrl) + "/api/groups/leave", sessionToken, request));
+	}
+
+	public void removeGroupMember(String apiBaseUrl, String sessionToken, RemoveGroupMemberRequest request) throws IOException
+	{
+		executeNoContent(postRequestWithSession(normalizeBaseUrl(apiBaseUrl) + "/api/groups/remove-member", sessionToken, request));
+	}
+
+	public MemberAuthCodeResponse getMemberAuthCode(String apiBaseUrl, String sessionToken, GetMemberAuthCodeRequest request) throws IOException
+	{
+		return executeJson(
+			postRequestWithSession(normalizeBaseUrl(apiBaseUrl) + "/api/groups/member-auth-code", sessionToken, request),
+			MemberAuthCodeResponse.class
+		);
+	}
+
+	public MemberAuthCodeResponse resetMemberAuthCode(String apiBaseUrl, String sessionToken, ResetMemberAuthCodeRequest request) throws IOException
+	{
+		return executeJson(
+			postRequestWithSession(normalizeBaseUrl(apiBaseUrl) + "/api/groups/reset-member-auth-code", sessionToken, request),
+			MemberAuthCodeResponse.class
+		);
+	}
+
+	public GroupResponse fetchGroup(String apiBaseUrl, String sessionToken, String inviteCode) throws IOException
 	{
 		Request httpRequest = new Request.Builder()
 			.url(normalizeBaseUrl(apiBaseUrl) + "/api/groups/" + inviteCode)
+			.header(SESSION_HEADER, sessionToken)
 			.get()
 			.build();
 		return executeJson(httpRequest, GroupResponse.class);
 	}
 
-	public List<GroupMemberResponse> fetchMembers(String apiBaseUrl, String inviteCode) throws IOException
+	public List<GroupMemberResponse> fetchMembers(String apiBaseUrl, String sessionToken, String inviteCode) throws IOException
 	{
 		Request httpRequest = new Request.Builder()
 			.url(normalizeBaseUrl(apiBaseUrl) + "/api/groups/" + inviteCode + "/members")
+			.header(SESSION_HEADER, sessionToken)
 			.get()
 			.build();
 		return executeJson(httpRequest, GROUP_MEMBER_LIST_TYPE);
 	}
 
-	public List<BackendEventResponse> fetchGroupEvents(String apiBaseUrl, String inviteCode) throws IOException
+	public List<BackendEventResponse> fetchGroupEvents(String apiBaseUrl, String sessionToken, String inviteCode) throws IOException
 	{
 		Request httpRequest = new Request.Builder()
 			.url(normalizeBaseUrl(apiBaseUrl) + "/api/events/group/" + inviteCode)
+			.header(SESSION_HEADER, sessionToken)
 			.get()
 			.build();
 		return executeJson(httpRequest, BACKEND_EVENT_LIST_TYPE);
 	}
 
-	// Lets the panel display the last known successful sync time.
 	public Instant getLastSuccessfulSync()
 	{
 		return lastSuccessfulSync;
 	}
 
-	// Removes a trailing slash so endpoint construction stays consistent.
 	private String normalizeBaseUrl(String apiBaseUrl)
 	{
 		if (apiBaseUrl.endsWith("/"))
@@ -133,6 +157,16 @@ public class SyncService
 			.post(body)
 			.build();
 		return executeJson(httpRequest, responseType);
+	}
+
+	private Request postRequestWithSession(String url, String sessionToken, Object requestBody)
+	{
+		RequestBody body = RequestBody.create(JSON, gson.toJson(requestBody));
+		return new Request.Builder()
+			.url(url)
+			.header(SESSION_HEADER, sessionToken)
+			.post(body)
+			.build();
 	}
 
 	private <T> T executeJson(Request request, Class<T> responseType) throws IOException
