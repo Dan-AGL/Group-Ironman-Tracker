@@ -10,21 +10,11 @@ public interface GIMTrackerConfig extends Config
 	// Stores the group identifier that the backend uses to associate uploads.
 	@ConfigItem(
 		keyName = "groupCode",
-		name = "Invite Code",
-		description = "Invite code used to join a shared group",
+		name = "Group Auth Code",
+		description = "Shared group auth code used to join or re-authenticate a group",
 		secret = true
 	)
 	default String groupCode()
-	{
-		return "";
-	}
-
-	@ConfigItem(
-		keyName = "groupName",
-		name = "Group Name",
-		description = "Display name of the joined group"
-	)
-	default String groupName()
 	{
 		return "";
 	}

@@ -1,6 +1,7 @@
 package com.dan.gimtracker;
 
 import com.dan.gimtracker.model.TrackedEvent;
+import java.awt.Toolkit;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -10,6 +11,7 @@ import java.awt.Graphics2D;
 import java.awt.GridLayout;
 import java.awt.Image;
 import java.awt.RenderingHints;
+import java.awt.datatransfer.StringSelection;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.time.Instant;
@@ -55,9 +57,7 @@ public class ProgressPanel extends PluginPanel
 	private Runnable joinGroupAction = () -> { };
 	private Runnable showMembersAction = () -> showMembersDialog();
 	private Runnable showAuthCodeAction = () -> { };
-	private Runnable authenticateWithAuthCodeAction = () -> { };
 	private Consumer<String> removeMemberAction = memberName -> { };
-	private Consumer<String> resetMemberAuthCodeAction = memberName -> { };
 	private List<GroupMemberView> currentMembers = List.of();
 	private boolean canRemoveMembers;
 	private String localPlayerName = "";
@@ -100,14 +100,12 @@ public class ProgressPanel extends PluginPanel
 		JButton createButton = createActionButton("+", "Create a new group", () -> createGroupAction.run());
 		JButton leaveButton = createActionButton("-", "Leave the current group", () -> leaveGroupAction.run());
 		JButton membersButton = createActionButton("M", "Show current group members", () -> showMembersAction.run());
-		JButton authCodeButton = createActionButton("C", "Show my member auth code", () -> showAuthCodeAction.run());
-		JButton authenticateButton = createActionButton("A", "Authenticate with a saved member auth code", () -> authenticateWithAuthCodeAction.run());
-		JButton joinButton = createActionButton("J", "Join a group with an invite code", () -> joinGroupAction.run());
+		JButton authCodeButton = createActionButton("C", "Show the current group auth code", () -> showAuthCodeAction.run());
+		JButton joinButton = createActionButton("J", "Join or rejoin a group with the group auth code", () -> joinGroupAction.run());
 		actionPanel.add(createButton);
 		actionPanel.add(leaveButton);
 		actionPanel.add(membersButton);
 		actionPanel.add(authCodeButton);
-		actionPanel.add(authenticateButton);
 		actionPanel.add(joinButton);
 		groupPanel.add(groupNameValue, BorderLayout.NORTH);
 		groupPanel.add(actionPanel, BorderLayout.SOUTH);
@@ -134,8 +132,11 @@ public class ProgressPanel extends PluginPanel
 	public void updateGroup(String groupName, String inviteCode)
 	{
 		runOnUiThread(() ->
-			groupNameValue.setText(groupName == null || groupName.isBlank() ? "No Group" : groupName)
-		);
+		{
+			groupNameValue.setText(groupName == null || groupName.isBlank() ? "No Group" : groupName);
+			revalidate();
+			repaint();
+		});
 	}
 
 	public void updateMembers(List<GroupMemberView> members, boolean canRemoveMembers, String localPlayerName)
@@ -145,6 +146,8 @@ public class ProgressPanel extends PluginPanel
 			currentMembers = members;
 			this.canRemoveMembers = canRemoveMembers;
 			this.localPlayerName = localPlayerName == null ? "" : localPlayerName;
+			revalidate();
+			repaint();
 		});
 	}
 
@@ -178,16 +181,6 @@ public class ProgressPanel extends PluginPanel
 		this.showAuthCodeAction = showAuthCodeAction;
 	}
 
-	public void setAuthenticateWithAuthCodeAction(Runnable authenticateWithAuthCodeAction)
-	{
-		this.authenticateWithAuthCodeAction = authenticateWithAuthCodeAction;
-	}
-
-	public void setResetMemberAuthCodeAction(Consumer<String> resetMemberAuthCodeAction)
-	{
-		this.resetMemberAuthCodeAction = resetMemberAuthCodeAction;
-	}
-
 	public String promptForValue(String title, String prompt)
 	{
 		return JOptionPane.showInputDialog(this, prompt, title, JOptionPane.PLAIN_MESSAGE);
@@ -218,16 +211,40 @@ public class ProgressPanel extends PluginPanel
 		runOnUiThread(() -> JOptionPane.showMessageDialog(this, message, title, JOptionPane.PLAIN_MESSAGE));
 	}
 
-	public void showAuthCode(String playerName, String authCode)
+	public void showGroupAuthCode(String authCode)
 	{
 		runOnUiThread(() ->
-			JOptionPane.showMessageDialog(
-				this,
-				playerName + " auth code:\n" + authCode + "\n\nKeep this code safe if you change computers.",
-				"Member Auth Code",
-				JOptionPane.PLAIN_MESSAGE
-			)
-		);
+		{
+			JPasswordField codeField = new JPasswordField(authCode);
+			codeField.setEditable(false);
+			char defaultEchoChar = codeField.getEchoChar();
+
+			JButton toggleButton = new JButton("Show");
+			toggleButton.addActionListener(event ->
+			{
+				boolean reveal = codeField.getEchoChar() != (char) 0;
+				codeField.setEchoChar(reveal ? (char) 0 : defaultEchoChar);
+				toggleButton.setText(reveal ? "Hide" : "Show");
+			});
+
+			JButton copyButton = new JButton("Copy");
+			copyButton.addActionListener(event ->
+			{
+				Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(authCode), null);
+				copyButton.setText("Copied");
+			});
+
+			JPanel fieldPanel = new JPanel(new BorderLayout(6, 0));
+			fieldPanel.add(codeField, BorderLayout.CENTER);
+			fieldPanel.add(toggleButton, BorderLayout.EAST);
+
+			JPanel content = new JPanel(new BorderLayout(0, 8));
+			content.add(new JLabel("Current group auth code"), BorderLayout.NORTH);
+			content.add(fieldPanel, BorderLayout.CENTER);
+			content.add(copyButton, BorderLayout.SOUTH);
+
+			JOptionPane.showMessageDialog(this, content, "Group Auth Code", JOptionPane.PLAIN_MESSAGE);
+		});
 	}
 
 	public void showMembersDialog()
@@ -263,11 +280,10 @@ public class ProgressPanel extends PluginPanel
 		runOnUiThread(() ->
 		{
 			recentEventsContainer.removeAll();
-			recentEventsContainer.setLayout(new GridLayout(0, 1, 0, 8));
+			recentEventsContainer.setLayout(new BoxLayout(recentEventsContainer, BoxLayout.Y_AXIS));
 
 			if (events.isEmpty())
 			{
-				recentEventsContainer.setLayout(new BoxLayout(recentEventsContainer, BoxLayout.Y_AXIS));
 				recentEventsContainer.add(createEmptyStateLabel());
 				recentEventsContainer.revalidate();
 				recentEventsContainer.repaint();
@@ -277,6 +293,7 @@ public class ProgressPanel extends PluginPanel
 			for (TrackedEvent event : events)
 			{
 				recentEventsContainer.add(createEventCard(event));
+				recentEventsContainer.add(Box.createVerticalStrut(8));
 			}
 
 			recentEventsContainer.revalidate();
@@ -344,32 +361,6 @@ public class ProgressPanel extends PluginPanel
 			});
 			removeButton.setPreferredSize(new Dimension(28, 24));
 			row.add(removeButton, BorderLayout.EAST);
-		}
-
-		boolean resettable = canRemoveMembers
-			&& !member.getPlayerName().equalsIgnoreCase(localPlayerName);
-		if (resettable)
-		{
-			JButton resetButton = createActionButton("C", "Reset auth code for " + member.getPlayerName(), () ->
-			{
-				if (confirm("Reset Auth Code", "Reset the auth code for " + member.getPlayerName() + "?"))
-				{
-					resetMemberAuthCodeAction.accept(member.getPlayerName());
-				}
-			});
-			resetButton.setPreferredSize(new Dimension(28, 24));
-			JPanel eastPanel = new JPanel();
-			eastPanel.setLayout(new BoxLayout(eastPanel, BoxLayout.X_AXIS));
-			eastPanel.setBackground(CARD_BACKGROUND);
-			Component existingEast = ((BorderLayout) row.getLayout()).getLayoutComponent(BorderLayout.EAST);
-			if (existingEast != null)
-			{
-				row.remove(existingEast);
-				eastPanel.add(existingEast);
-				eastPanel.add(Box.createHorizontalStrut(4));
-			}
-			eastPanel.add(resetButton);
-			row.add(eastPanel, BorderLayout.EAST);
 		}
 
 		return row;
@@ -493,7 +484,11 @@ public class ProgressPanel extends PluginPanel
 		}
 		if ("BOSS_DROP".equals(type))
 		{
-			return details.get("bossName") + " drop worth " + formatCoins(details.get("value"));
+			Object bossName = details.get("bossName");
+			String normalizedBossName = bossName == null ? "" : String.valueOf(bossName);
+			return normalizedBossName.isBlank()
+				? "Drop worth " + formatCoins(details.get("value"))
+				: normalizedBossName + " drop worth " + formatCoins(details.get("value"));
 		}
 		if ("BOSS_KC".equals(type))
 		{

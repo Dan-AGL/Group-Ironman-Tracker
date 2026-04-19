@@ -1,19 +1,14 @@
 package com.dan.gimtracker;
 
-import com.dan.gimtracker.model.AuthenticateMemberRequest;
 import com.dan.gimtracker.model.AuthenticatedGroupResponse;
 import com.dan.gimtracker.model.BackendEventResponse;
-import com.dan.gimtracker.model.BootstrapSessionRequest;
 import com.dan.gimtracker.model.CreateGroupRequest;
-import com.dan.gimtracker.model.GetMemberAuthCodeRequest;
 import com.dan.gimtracker.model.GroupMemberResponse;
 import com.dan.gimtracker.model.GroupResponse;
 import com.dan.gimtracker.model.JoinGroupRequest;
 import com.dan.gimtracker.model.LeaveGroupRequest;
-import com.dan.gimtracker.model.MemberAuthCodeResponse;
 import com.dan.gimtracker.model.ProgressUploadRequest;
 import com.dan.gimtracker.model.RemoveGroupMemberRequest;
-import com.dan.gimtracker.model.ResetMemberAuthCodeRequest;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import java.io.IOException;
@@ -68,16 +63,6 @@ public class SyncService
 		return postJson(normalizeBaseUrl(apiBaseUrl) + "/api/groups/join", request, AuthenticatedGroupResponse.class);
 	}
 
-	public AuthenticatedGroupResponse authenticateMember(String apiBaseUrl, AuthenticateMemberRequest request) throws IOException
-	{
-		return postJson(normalizeBaseUrl(apiBaseUrl) + "/api/groups/authenticate-member", request, AuthenticatedGroupResponse.class);
-	}
-
-	public AuthenticatedGroupResponse bootstrapSession(String apiBaseUrl, BootstrapSessionRequest request) throws IOException
-	{
-		return postJson(normalizeBaseUrl(apiBaseUrl) + "/api/groups/bootstrap-session", request, AuthenticatedGroupResponse.class);
-	}
-
 	public void leaveGroup(String apiBaseUrl, String sessionToken, LeaveGroupRequest request) throws IOException
 	{
 		executeNoContent(postRequestWithSession(normalizeBaseUrl(apiBaseUrl) + "/api/groups/leave", sessionToken, request));
@@ -86,22 +71,6 @@ public class SyncService
 	public void removeGroupMember(String apiBaseUrl, String sessionToken, RemoveGroupMemberRequest request) throws IOException
 	{
 		executeNoContent(postRequestWithSession(normalizeBaseUrl(apiBaseUrl) + "/api/groups/remove-member", sessionToken, request));
-	}
-
-	public MemberAuthCodeResponse getMemberAuthCode(String apiBaseUrl, String sessionToken, GetMemberAuthCodeRequest request) throws IOException
-	{
-		return executeJson(
-			postRequestWithSession(normalizeBaseUrl(apiBaseUrl) + "/api/groups/member-auth-code", sessionToken, request),
-			MemberAuthCodeResponse.class
-		);
-	}
-
-	public MemberAuthCodeResponse resetMemberAuthCode(String apiBaseUrl, String sessionToken, ResetMemberAuthCodeRequest request) throws IOException
-	{
-		return executeJson(
-			postRequestWithSession(normalizeBaseUrl(apiBaseUrl) + "/api/groups/reset-member-auth-code", sessionToken, request),
-			MemberAuthCodeResponse.class
-		);
 	}
 
 	public GroupResponse fetchGroup(String apiBaseUrl, String sessionToken, String inviteCode) throws IOException

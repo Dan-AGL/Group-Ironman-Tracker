@@ -204,6 +204,13 @@ public class EventTracker
 		return pendingEvents.size();
 	}
 
+	// Clears local pending and recent event state when the active group is reset or left.
+	public void clearTrackedEvents()
+	{
+		pendingEvents.clear();
+		recentEvents.clear();
+	}
+
 	// Returns the latest tracked events for quick validation in the sidebar.
 	public List<TrackedEvent> getRecentEvents()
 	{
@@ -223,6 +230,11 @@ public class EventTracker
 		{
 			removeMatchingBossKcEvent(pendingEvents, trackedEvent);
 			removeMatchingBossKcEvent(recentEvents, trackedEvent);
+		}
+		else if ("BOSS_DROP".equals(trackedEvent.getType()))
+		{
+			removeMatchingBossDropEvent(pendingEvents, trackedEvent);
+			removeMatchingBossDropEvent(recentEvents, trackedEvent);
 		}
 
 		pendingEvents.add(trackedEvent);
@@ -259,5 +271,33 @@ public class EventTracker
 		return String.valueOf(firstDetails.get("playerName")).equals(String.valueOf(secondDetails.get("playerName")))
 			&& String.valueOf(firstDetails.get("bossName")).equals(String.valueOf(secondDetails.get("bossName")))
 			&& String.valueOf(firstDetails.get("countType")).equals(String.valueOf(secondDetails.get("countType")));
+	}
+
+	private void removeMatchingBossDropEvent(Iterable<TrackedEvent> events, TrackedEvent targetEvent)
+	{
+		Iterator<TrackedEvent> iterator = events.iterator();
+		while (iterator.hasNext())
+		{
+			TrackedEvent existingEvent = iterator.next();
+			if (!"BOSS_DROP".equals(existingEvent.getType()))
+			{
+				continue;
+			}
+
+			if (sameBossDrop(existingEvent, targetEvent))
+			{
+				iterator.remove();
+				return;
+			}
+		}
+	}
+
+	private boolean sameBossDrop(TrackedEvent first, TrackedEvent second)
+	{
+		Map<String, Object> firstDetails = first.getDetails();
+		Map<String, Object> secondDetails = second.getDetails();
+		return String.valueOf(firstDetails.get("playerName")).equals(String.valueOf(secondDetails.get("playerName")))
+			&& String.valueOf(firstDetails.get("itemName")).equals(String.valueOf(secondDetails.get("itemName")))
+			&& String.valueOf(firstDetails.get("value")).equals(String.valueOf(secondDetails.get("value")));
 	}
 }

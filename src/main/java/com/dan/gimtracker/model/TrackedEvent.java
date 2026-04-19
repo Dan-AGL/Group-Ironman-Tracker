@@ -72,10 +72,15 @@ public class TrackedEvent
 		details.put("playerName", playerName);
 		details.put("sourceChannel", sourceChannel);
 
+		String normalizedBossName = bossName == null ? "" : bossName;
+		String summary = normalizedBossName.isBlank()
+			? itemName + ": " + value + " gp"
+			: itemName + " from " + normalizedBossName + ": " + value + " gp";
+
 		return new TrackedEvent(
 			"BOSS_DROP",
 			Instant.now().toString(),
-			itemName + " from " + bossName + ": " + value + " gp",
+			summary,
 			details
 		);
 	}
