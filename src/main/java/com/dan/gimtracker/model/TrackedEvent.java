@@ -3,6 +3,7 @@ package com.dan.gimtracker.model;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 public class TrackedEvent
 {
@@ -24,6 +25,7 @@ public class TrackedEvent
 	public static TrackedEvent levelUp(String playerName, String skill, int oldLevel, int newLevel)
 	{
 		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("eventId", UUID.randomUUID().toString());
 		details.put("playerName", playerName);
 		details.put("skill", skill);
 		details.put("oldLevel", oldLevel);
@@ -38,21 +40,24 @@ public class TrackedEvent
 		);
 	}
 
-	// Creates a fake level-up event for developer testing without needing a real level-up.
-	public static TrackedEvent testLevelUp()
-	{
-		return levelUp("GIM LeDonj", "ATTACK", 98, 99);
-	}
-
 	// Creates a boss KC or raid completion event once a tracked count crosses the configured threshold.
-	public static TrackedEvent bossKillCount(String playerName, String bossName, String countType, int sessionCount, int totalCount)
+	public static TrackedEvent bossKillCount(
+		String playerName,
+		String bossName,
+		String countType,
+		int sessionCount,
+		int totalCount,
+		String sessionId
+	)
 	{
 		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("eventId", UUID.randomUUID().toString());
 		details.put("playerName", playerName);
 		details.put("bossName", bossName);
 		details.put("countType", countType);
 		details.put("count", sessionCount);
 		details.put("totalCount", totalCount);
+		details.put("sessionId", sessionId);
 
 		return new TrackedEvent(
 			"BOSS_KC",
@@ -62,10 +67,37 @@ public class TrackedEvent
 		);
 	}
 
+	public static TrackedEvent bossKillCountSession(
+		String playerName,
+		String bossName,
+		String countType,
+		int sessionCount,
+		int totalCount,
+		String sessionId
+	)
+	{
+		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("eventId", UUID.randomUUID().toString());
+		details.put("playerName", playerName);
+		details.put("bossName", bossName);
+		details.put("countType", countType);
+		details.put("count", sessionCount);
+		details.put("totalCount", totalCount);
+		details.put("sessionId", sessionId);
+
+		return new TrackedEvent(
+			"BOSS_KC_SESSION",
+			Instant.now().toString(),
+			playerName + " " + bossName + " session " + countType.toLowerCase().replace('_', ' ') + ": " + sessionCount,
+			details
+		);
+	}
+
 	// Creates a boss drop event with the item, value, and source boss extracted from chat.
 	public static TrackedEvent bossDrop(String bossName, String itemName, long value, String playerName, String sourceChannel)
 	{
 		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("eventId", UUID.randomUUID().toString());
 		details.put("bossName", bossName);
 		details.put("itemName", itemName);
 		details.put("value", value);
@@ -89,6 +121,7 @@ public class TrackedEvent
 	public static TrackedEvent combatTaskComplete(String playerName, String taskName, String tier, String sourceChannel)
 	{
 		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("eventId", UUID.randomUUID().toString());
 		details.put("playerName", playerName);
 		details.put("taskName", taskName);
 		details.put("tier", tier);
@@ -106,16 +139,11 @@ public class TrackedEvent
 		);
 	}
 
-	// Creates a fake combat task completion event for developer testing.
-	public static TrackedEvent testCombatTask()
-	{
-		return combatTaskComplete("GIM LeDonj", "Perfect Brutus", "MEDIUM", "DEVELOPER_MODE");
-	}
-
 	// Creates a collection-log event when a player unlocks a new item slot.
 	public static TrackedEvent collectionLogItem(String playerName, String itemName, int unlockedCount, int totalCount, String sourceChannel)
 	{
 		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("eventId", UUID.randomUUID().toString());
 		details.put("playerName", playerName);
 		details.put("itemName", itemName);
 		details.put("unlockedCount", unlockedCount);
@@ -128,12 +156,6 @@ public class TrackedEvent
 			playerName + " unlocked collection log item: " + itemName + " (" + unlockedCount + "/" + totalCount + ")",
 			details
 		);
-	}
-
-	// Creates a fake collection-log event for developer testing.
-	public static TrackedEvent testCollectionLog()
-	{
-		return collectionLogItem("GIM LeDonj", "Brutus Club", 422, 1692, "DEVELOPER_MODE");
 	}
 
 	// Returns the event category used by the backend and future filtering.

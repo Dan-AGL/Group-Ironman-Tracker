@@ -6,7 +6,7 @@ $bundleRoot = Join-Path $distRoot "gimtracker-tester"
 $zipPath = Join-Path $distRoot "gimtracker-tester.zip"
 
 Write-Host "Building runnable tester jar..."
-& (Join-Path $repoRoot "gradlew.bat") clean shadowJar --no-daemon
+& (Join-Path $repoRoot "gradlew.bat") shadowJar --no-daemon
 
 $jar = Get-ChildItem (Join-Path $repoRoot "build\libs") -Filter "*-all.jar" |
     Sort-Object LastWriteTimeUtc -Descending |
@@ -46,7 +46,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-java -jar "%SCRIPT_DIR%%JAR_NAME%" --developer-mode --debug
+java -ea -jar "%SCRIPT_DIR%%JAR_NAME%" --developer-mode --debug
 '@
 
 Set-Content -Path (Join-Path $bundleRoot "launch-plugin.bat") -Value $launcher -NoNewline

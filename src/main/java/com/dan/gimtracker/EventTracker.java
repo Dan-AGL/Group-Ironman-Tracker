@@ -1,6 +1,7 @@
 package com.dan.gimtracker;
 
 import com.dan.gimtracker.model.TrackedEvent;
+import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -26,6 +27,7 @@ public class EventTracker
 	private final Set<String> unlockedCollectionLogEntries = new HashSet<>();
 	private final List<TrackedEvent> pendingEvents = new ArrayList<>();
 	private final Deque<TrackedEvent> recentEvents = new ArrayDeque<>();
+	private String currentBossSessionId = Instant.now().toString();
 
 	// Clears login state so the next observed stats are treated as the baseline, not as fresh level-ups.
 	public void resetLevelBaseline()
@@ -38,6 +40,7 @@ public class EventTracker
 	{
 		lastReportedBossCounts.clear();
 		sessionBossCounts.clear();
+		currentBossSessionId = Instant.now().toString();
 	}
 
 	// Clears remembered combat tasks so a fresh session can establish which completions are new.
@@ -89,9 +92,15 @@ public class EventTracker
 		}
 
 		String bossKey = bossName + "|" + countType;
-		Integer previousCount = lastReportedBossCounts.put(bossKey, count);
+		Integer previousCount = lastReportedBossCounts.get(bossKey);
 		if (previousCount == null)
 		{
+			lastReportedBossCounts.put(bossKey, count);
+			if (sessionBossCounts.containsKey(bossKey))
+			{
+				return List.of();
+			}
+
 			sessionBossCounts.put(bossKey, 1);
 			if (threshold > 1)
 			{
@@ -104,6 +113,7 @@ public class EventTracker
 		}
 		else
 		{
+			lastReportedBossCounts.put(bossKey, count);
 			int increment = count - previousCount;
 			sessionBossCounts.merge(bossKey, increment, Integer::sum);
 		}
@@ -114,7 +124,14 @@ public class EventTracker
 			return List.of();
 		}
 
-		TrackedEvent trackedEvent = TrackedEvent.bossKillCount(playerName, bossName, countType, sessionCount, count);
+		TrackedEvent trackedEvent = TrackedEvent.bossKillCount(
+			playerName,
+			bossName,
+			countType,
+			sessionCount,
+			count,
+			currentBossSessionId
+		);
 		queueEvent(trackedEvent);
 		return List.of(trackedEvent);
 	}
@@ -143,12 +160,14 @@ public class EventTracker
 	public List<TrackedEvent> captureCombatTaskEvent(String playerName, String taskName, String tier, String sourceChannel)
 	{
 		String normalizedTask = taskName.trim();
-		if (!completedCombatTasks.add(normalizedTask))
+		String normalizedTier = tier == null ? "" : tier.trim().toUpperCase();
+		String taskKey = normalizedTier + "|" + normalizedTask;
+		if (!completedCombatTasks.add(taskKey))
 		{
 			return List.of();
 		}
 
-		TrackedEvent trackedEvent = TrackedEvent.combatTaskComplete(playerName, normalizedTask, tier, sourceChannel);
+		TrackedEvent trackedEvent = TrackedEvent.combatTaskComplete(playerName, normalizedTask, normalizedTier, sourceChannel);
 		queueEvent(trackedEvent);
 		return List.of(trackedEvent);
 	}
@@ -217,10 +236,35 @@ public class EventTracker
 		return new ArrayList<>(recentEvents);
 	}
 
-	// Injects a synthetic event so the full queue and sync loop can be tested without in-game actions.
-	public void addTestEvent(TrackedEvent trackedEvent)
+	public List<TrackedEvent> buildBossSessionSummaryEvents(String playerName)
 	{
-		queueEvent(trackedEvent);
+		List<TrackedEvent> summaries = new ArrayList<>();
+		for (Map.Entry<String, Integer> entry : sessionBossCounts.entrySet())
+		{
+			int sessionCount = entry.getValue();
+			if (sessionCount <= 0)
+			{
+				continue;
+			}
+
+			String[] bossKeyParts = entry.getKey().split("\\|", 2);
+			if (bossKeyParts.length != 2)
+			{
+				continue;
+			}
+
+			int totalCount = lastReportedBossCounts.getOrDefault(entry.getKey(), sessionCount);
+			summaries.add(TrackedEvent.bossKillCountSession(
+				playerName,
+				bossKeyParts[0],
+				bossKeyParts[1],
+				sessionCount,
+				totalCount,
+				currentBossSessionId
+			));
+		}
+
+		return summaries;
 	}
 
 	// Adds a new event to the pending queue and bounded recent history.

@@ -80,6 +80,10 @@ public class GIMTrackerPlugin extends Plugin
 		"Congratulations!? (?:you've|you have) completed (?:an? )?(easy|medium|hard|elite|master|grandmaster) combat achievement '?(.+?)'?(?: \\((\\d+) points?\\))?\\.?$",
 		Pattern.CASE_INSENSITIVE
 	);
+	private static final Pattern NAMED_COMBAT_TASK_MESSAGE = Pattern.compile(
+		"(.+?) has completed (?:an? |the )?(?:(easy|medium|hard|elite|master|grandmaster) )?combat (?:task|achievement task):? (.+?)\\.?$",
+		Pattern.CASE_INSENSITIVE
+	);
 	private static final Pattern COLLECTION_LOG_MESSAGE = Pattern.compile(
 		"(.+?) received a new collection log item: (.+?) \\(([\\d,]+)/([\\d,]+)\\)\\.?$",
 		Pattern.CASE_INSENSITIVE
@@ -105,10 +109,14 @@ public class GIMTrackerPlugin extends Plugin
 	private ProgressPanel progressPanel;
 	private NavigationButton navigationButton;
 	private Instant lastSyncAttempt = Instant.EPOCH;
+	private Instant lastRefreshAttempt = Instant.EPOCH;
+	private Instant currentLoginSessionStart = Instant.EPOCH;
 	private List<TrackedEvent> persistedRecentEvents = List.of();
 	private volatile Set<String> currentGroupMembers = Set.of();
 	private volatile String currentGroupCode = "";
 	private volatile String currentGroupName = "";
+	private volatile String lastKnownPlayerName = "";
+	private boolean loginSessionResetPending = false;
 
 	@Override
 	protected void startUp() throws Exception
@@ -135,6 +143,9 @@ public class GIMTrackerPlugin extends Plugin
 
 		if (client.getGameState() == GameState.LOGGED_IN)
 		{
+			currentLoginSessionStart = Instant.now();
+			updateLastKnownPlayerName();
+			loginSessionResetPending = false;
 			eventTracker.resetLevelBaseline();
 			eventTracker.resetBossCountBaseline();
 			eventTracker.resetCombatTaskBaseline();
@@ -156,21 +167,31 @@ public class GIMTrackerPlugin extends Plugin
 	{
 		if (gameStateChanged.getGameState() == GameState.LOGGED_IN)
 		{
-			eventTracker.resetLevelBaseline();
-			eventTracker.resetBossCountBaseline();
-			eventTracker.resetCombatTaskBaseline();
-			eventTracker.resetCollectionLogBaseline();
-			progressPanel.updateStatus("Tracking level-ups");
+			updateLastKnownPlayerName();
+			if (loginSessionResetPending)
+			{
+				currentLoginSessionStart = Instant.now();
+				loginSessionResetPending = false;
+				eventTracker.clearTrackedEvents();
+				eventTracker.resetLevelBaseline();
+				eventTracker.resetBossCountBaseline();
+				eventTracker.resetCombatTaskBaseline();
+				eventTracker.resetCollectionLogBaseline();
+			}
+			progressPanel.updateStatus("Tracking group activity");
 			refreshPanel();
 			refreshGroupDetails();
 		}
 		else if (gameStateChanged.getGameState() == GameState.LOGIN_SCREEN)
 		{
+			currentLoginSessionStart = Instant.EPOCH;
+			loginSessionResetPending = true;
+			flushPendingEvents("logout");
+			eventTracker.clearTrackedEvents();
 			eventTracker.resetLevelBaseline();
 			eventTracker.resetBossCountBaseline();
 			eventTracker.resetCombatTaskBaseline();
 			eventTracker.resetCollectionLogBaseline();
-			flushPendingEvents("logout");
 			progressPanel.updateStatus("Waiting for login");
 			progressPanel.updateMembers(List.of(), false, "");
 			persistedRecentEvents = List.of();
@@ -320,13 +341,31 @@ public class GIMTrackerPlugin extends Plugin
 		else
 		{
 			Matcher quotedMatcher = COMBAT_TASK_QUOTED_MESSAGE.matcher(message);
-			if (!quotedMatcher.matches())
+			if (quotedMatcher.matches())
 			{
-				return false;
+				tier = quotedMatcher.group(1).toUpperCase();
+				taskName = quotedMatcher.group(2);
 			}
+			else
+			{
+				Matcher namedMatcher = NAMED_COMBAT_TASK_MESSAGE.matcher(message);
+				if (namedMatcher.matches() && messageMatchesLocalPlayer(namedMatcher.group(1), playerName))
+				{
+					tier = namedMatcher.group(2) == null ? "" : namedMatcher.group(2).toUpperCase();
+					taskName = namedMatcher.group(3);
+				}
+				else
+				{
+					NamedCombatTask namedTask = parseNamedCombatTaskBroadcast(message, playerName);
+					if (namedTask == null)
+					{
+						return false;
+					}
 
-			tier = quotedMatcher.group(1).toUpperCase();
-			taskName = quotedMatcher.group(2);
+					tier = namedTask.tier;
+					taskName = namedTask.taskName;
+				}
+			}
 		}
 
 		List<TrackedEvent> newEvents = eventTracker.captureCombatTaskEvent(
@@ -386,14 +425,28 @@ public class GIMTrackerPlugin extends Plugin
 	@Subscribe
 	public void onGameTick(GameTick event)
 	{
-		if (client.getGameState() != GameState.LOGGED_IN || eventTracker.getPendingCount() == 0)
+		if (client.getGameState() != GameState.LOGGED_IN)
 		{
 			return;
 		}
 
-		if (Duration.between(lastSyncAttempt, Instant.now()).compareTo(SYNC_INTERVAL) >= 0)
+		updateLastKnownPlayerName();
+
+		Instant now = Instant.now();
+		if (eventTracker.getPendingCount() > 0 && Duration.between(lastSyncAttempt, now).compareTo(SYNC_INTERVAL) >= 0)
 		{
 			flushPendingEvents("timer");
+		}
+
+		if (activeGroupCode().isBlank() || config.sessionToken().isBlank())
+		{
+			return;
+		}
+
+		if (Duration.between(lastRefreshAttempt, now).compareTo(SYNC_INTERVAL) >= 0)
+		{
+			lastRefreshAttempt = now;
+			refreshPersistedEvents();
 		}
 	}
 
@@ -420,15 +473,18 @@ public class GIMTrackerPlugin extends Plugin
 			return;
 		}
 
-		List<TrackedEvent> events = eventTracker.drainPendingEvents();
+		List<TrackedEvent> events = new ArrayList<>(eventTracker.drainPendingEvents());
+		if ("logout".equals(reason))
+		{
+			events.addAll(eventTracker.buildBossSessionSummaryEvents(resolvePlayerName()));
+		}
 		if (events.isEmpty())
 		{
 			refreshPanel();
 			return;
 		}
 
-		Player localPlayer = client.getLocalPlayer();
-		String playerName = localPlayer == null ? "Unknown" : localPlayer.getName();
+		String playerName = resolvePlayerName();
 		ProgressUploadRequest request = new ProgressUploadRequest(
 			activeGroupCode(),
 			playerName,
@@ -495,6 +551,12 @@ public class GIMTrackerPlugin extends Plugin
 	{
 		if (!ensureLoggedIn("Create Group"))
 		{
+			return;
+		}
+
+		if (!activeGroupCode().isBlank())
+		{
+			progressPanel.showMessage("Create Group", "You are already in a group. Please leave to create another.");
 			return;
 		}
 
@@ -846,6 +908,7 @@ public class GIMTrackerPlugin extends Plugin
 			persistedRecentEvents = collapsePersistedEvents(backendEvents.stream()
 				.map(this::toTrackedEvent)
 				.filter(event -> event != null)
+				.filter(event -> !"BOSS_KC".equals(event.getType()))
 				.collect(Collectors.toList()));
 			refreshPanel();
 		}
@@ -858,42 +921,96 @@ public class GIMTrackerPlugin extends Plugin
 
 	private List<TrackedEvent> buildDisplayEvents()
 	{
-		LinkedHashMap<String, TrackedEvent> combined = new LinkedHashMap<>();
 		List<TrackedEvent> localEvents = eventTracker.getRecentEvents();
-		Set<String> localBossKcStreams = new HashSet<>();
-		Map<String, String> newestPersistedBossKcEventKeys = new LinkedHashMap<>();
-		for (TrackedEvent event : localEvents)
-		{
-			combined.put(eventKey(event), event);
-			if ("BOSS_KC".equals(event.getType()))
-			{
-				localBossKcStreams.add(bossKcStreamKey(event));
-			}
-		}
+		Set<String> localEventIds = localEvents.stream()
+			.map(this::eventId)
+			.filter(id -> !id.isBlank())
+			.collect(Collectors.toSet());
+		List<TrackedEvent> mergedEvents = new ArrayList<>(localEvents);
+		mergedEvents.addAll(persistedRecentEvents);
+		mergedEvents.sort((left, right) -> compareEventTimestamps(right, left));
 
-		for (TrackedEvent event : persistedRecentEvents)
+		List<TrackedEvent> displayEvents = new ArrayList<>();
+		Set<String> seenEventKeys = new HashSet<>();
+		Set<String> seenBossKcSessions = new HashSet<>();
+		Set<String> seenBossDropKeys = new HashSet<>();
+		for (TrackedEvent event : mergedEvents)
 		{
-			if ("BOSS_KC".equals(event.getType()))
+			if (persistedRecentEvents.contains(event))
 			{
-				newestPersistedBossKcEventKeys.putIfAbsent(bossKcStreamKey(event), eventKey(event));
+				String eventId = eventId(event);
+				if (!eventId.isBlank() && localEventIds.contains(eventId))
+				{
+					continue;
+				}
 			}
-		}
 
-		for (TrackedEvent event : persistedRecentEvents)
-		{
-			if ("BOSS_KC".equals(event.getType())
-				&& localBossKcStreams.contains(bossKcStreamKey(event))
-				&& eventKey(event).equals(newestPersistedBossKcEventKeys.get(bossKcStreamKey(event))))
+			if (!seenEventKeys.add(eventKey(event)))
 			{
 				continue;
 			}
-			combined.putIfAbsent(eventKey(event), event);
+
+			if ("BOSS_KC".equals(event.getType()) || "BOSS_KC_SESSION".equals(event.getType()))
+			{
+				if (!seenBossKcSessions.add(bossKcSessionKey(event)))
+				{
+					continue;
+				}
+			}
+			else if ("BOSS_DROP".equals(event.getType()))
+			{
+				if (!seenBossDropKeys.add(bossDropKey(event)))
+				{
+					continue;
+				}
+			}
+
+			displayEvents.add(event);
+			if (displayEvents.size() >= MAX_DISPLAY_EVENTS)
+			{
+				break;
+			}
 		}
 
-		return combined.values()
-			.stream()
-			.limit(MAX_DISPLAY_EVENTS)
-			.collect(Collectors.toList());
+		return displayEvents;
+	}
+
+	private int compareEventTimestamps(TrackedEvent left, TrackedEvent right)
+	{
+		return eventTimestamp(left).compareTo(eventTimestamp(right));
+	}
+
+	private String eventId(TrackedEvent event)
+	{
+		Object eventId = event.getDetails().get("eventId");
+		return eventId == null ? "" : String.valueOf(eventId);
+	}
+
+	private void updateLastKnownPlayerName()
+	{
+		Player localPlayer = client.getLocalPlayer();
+		if (localPlayer != null && localPlayer.getName() != null && !localPlayer.getName().isBlank())
+		{
+			lastKnownPlayerName = localPlayer.getName();
+		}
+	}
+
+	private String resolvePlayerName()
+	{
+		updateLastKnownPlayerName();
+		return lastKnownPlayerName == null || lastKnownPlayerName.isBlank() ? "Unknown" : lastKnownPlayerName;
+	}
+
+	private Instant eventTimestamp(TrackedEvent event)
+	{
+		try
+		{
+			return Instant.parse(event.getTimestamp());
+		}
+		catch (Exception ex)
+		{
+			return Instant.EPOCH;
+		}
 	}
 
 	private boolean isCurrentGroupMember(String playerName)
@@ -938,6 +1055,8 @@ public class GIMTrackerPlugin extends Plugin
 			candidate = candidate.substring(closingBracketIndex + 1).trim();
 		}
 
+		candidate = candidate.replaceFirst("^(?:[A-Z_]+:\\d+\\|)+", "").trim();
+
 		return normalizePlayerIdentifier(candidate).equals(normalizePlayerIdentifier(localPlayerName));
 	}
 
@@ -951,8 +1070,74 @@ public class GIMTrackerPlugin extends Plugin
 		return playerName.toLowerCase(Locale.ENGLISH).replaceAll("[^a-z0-9]", "");
 	}
 
+	private NamedCombatTask parseNamedCombatTaskBroadcast(String message, String localPlayerName)
+	{
+		String marker = " has completed ";
+		int markerIndex = message.toLowerCase(Locale.ENGLISH).indexOf(marker);
+		if (markerIndex <= 0)
+		{
+			return null;
+		}
+
+		String candidatePlayer = message.substring(0, markerIndex).trim();
+		if (!messageMatchesLocalPlayer(candidatePlayer, localPlayerName))
+		{
+			return null;
+		}
+
+		String remainder = message.substring(markerIndex + marker.length()).trim();
+		if (remainder.endsWith("."))
+		{
+			remainder = remainder.substring(0, remainder.length() - 1).trim();
+		}
+
+		String lowerRemainder = remainder.toLowerCase(Locale.ENGLISH);
+		String[] tiers = {"easy", "medium", "hard", "elite", "master", "grandmaster"};
+		for (String supportedTier : tiers)
+		{
+			String[] prefixes = {
+				"a " + supportedTier + " combat task: ",
+				"an " + supportedTier + " combat task: ",
+				"the " + supportedTier + " combat task: ",
+				supportedTier + " combat task: "
+			};
+			for (String prefix : prefixes)
+			{
+				if (!lowerRemainder.startsWith(prefix))
+				{
+					continue;
+				}
+
+				String taskName = remainder.substring(prefix.length()).trim();
+				if (!taskName.isBlank())
+				{
+					return new NamedCombatTask(supportedTier.toUpperCase(Locale.ENGLISH), taskName);
+				}
+			}
+		}
+
+		return null;
+	}
+
+	private static final class NamedCombatTask
+	{
+		private final String tier;
+		private final String taskName;
+
+		private NamedCombatTask(String tier, String taskName)
+		{
+			this.tier = tier;
+			this.taskName = taskName;
+		}
+	}
+
 	private String eventKey(TrackedEvent event)
 	{
+		String eventId = eventId(event);
+		if (!eventId.isBlank())
+		{
+			return event.getType() + "|" + eventId;
+		}
 		return event.getType() + "|" + event.getTimestamp() + "|" + event.getSummary();
 	}
 
@@ -985,9 +1170,11 @@ public class GIMTrackerPlugin extends Plugin
 
 	private List<TrackedEvent> collapsePersistedEvents(List<TrackedEvent> events)
 	{
+		List<TrackedEvent> orderedEvents = new ArrayList<>(events);
+		Collections.reverse(orderedEvents);
 		List<TrackedEvent> collapsed = new ArrayList<>();
 		Map<String, Integer> activeBossKcIndexes = new LinkedHashMap<>();
-		for (TrackedEvent event : events)
+		for (TrackedEvent event : orderedEvents)
 		{
 			if (!"BOSS_KC".equals(event.getType()))
 			{
@@ -1042,6 +1229,18 @@ public class GIMTrackerPlugin extends Plugin
 			+ String.valueOf(details.get("countType"));
 	}
 
+	private String bossKcSessionKey(TrackedEvent event)
+	{
+		Map<String, Object> details = event.getDetails();
+		Object sessionId = details.get("sessionId");
+		if (sessionId != null && !String.valueOf(sessionId).isBlank() && !"null".equals(String.valueOf(sessionId)))
+		{
+			return bossKcStreamKey(event) + "|" + sessionId;
+		}
+
+		return eventKey(event);
+	}
+
 	private boolean isSameBossKcSession(TrackedEvent previous, TrackedEvent current)
 	{
 		if (!"BOSS_KC".equals(previous.getType()) || !"BOSS_KC".equals(current.getType()))
@@ -1064,12 +1263,38 @@ public class GIMTrackerPlugin extends Plugin
 			return false;
 		}
 
+		String previousSessionId = String.valueOf(previousDetails.get("sessionId"));
+		String currentSessionId = String.valueOf(currentDetails.get("sessionId"));
+		if (previousDetails.containsKey("sessionId") && currentDetails.containsKey("sessionId"))
+		{
+			return previousSessionId.equals(currentSessionId);
+		}
+
 		int previousSessionCount = readInt(previousDetails.get("count"));
 		int currentSessionCount = readInt(currentDetails.get("count"));
 		int previousTotalCount = readInt(previousDetails.get("totalCount"));
 		int currentTotalCount = readInt(currentDetails.get("totalCount"));
 
 		return currentSessionCount > previousSessionCount && currentTotalCount > previousTotalCount;
+	}
+
+	private String bossDropKey(TrackedEvent event)
+	{
+		Map<String, Object> details = event.getDetails();
+		return normalizePlayerIdentifier(String.valueOf(details.get("playerName"))) + "|"
+			+ normalizeTextKey(String.valueOf(details.get("bossName"))) + "|"
+			+ normalizeTextKey(String.valueOf(details.get("itemName"))) + "|"
+			+ String.valueOf(details.get("value"));
+	}
+
+	private String normalizeTextKey(String value)
+	{
+		if (value == null)
+		{
+			return "";
+		}
+
+		return value.trim().toLowerCase(Locale.ENGLISH).replaceAll("[^a-z0-9]", "");
 	}
 
 	private int readInt(Object value)

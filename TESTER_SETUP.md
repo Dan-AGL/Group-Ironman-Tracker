@@ -1,6 +1,6 @@
 # Group Ironman Tracker Tester Setup
 
-This package runs a local RuneLite client with the plugin loaded for testing before Plugin Hub release.
+This package runs a local RuneLite client with the plugin preloaded for testing before Plugin Hub release.
 
 ## 1. Install Java
 
@@ -10,41 +10,50 @@ Download:
 
 `https://adoptium.net/temurin/releases/`
 
-After installation, open a new Command Prompt and check:
+Then open Command Prompt and confirm Java is available:
 
 ```powershell
 java -version
 ```
 
-## 2. Launch the tester build
+## 2. Unzip the package
 
-Double-click:
+Extract `gimtracker-tester.zip` to any folder, for example:
+
+```text
+C:\RuneLite\gimtracker-tester
+```
+
+## 3. Launch the tester build
+
+Inside the extracted folder, double-click:
 
 `launch-plugin.bat`
 
-That starts RuneLite with the Group Ironman Tracker plugin loaded.
+That launches RuneLite with the Group Ironman Tracker plugin loaded.
 
-## 3. Configure the plugin
+You do not need IntelliJ on the tester machine for this package.
+
+## 4. Join the group
 
 Inside RuneLite:
 
-1. Open the `Group Ironman Tracker` plugin config.
-2. Confirm `API Base URL` is:
+1. Log into the correct account.
+2. Open the `Group Ironman Tracker` side panel.
+3. Click `Join Group`.
+4. Enter the shared `Group Auth Code` you were given.
+5. Confirm the group appears and the member list loads.
 
-```text
-http://Group-Ironman-Tracker-env.eba-rmummppd.ap-southeast-2.elasticbeanstalk.com
-```
+There is no `API Base URL` setting anymore.
 
-3. Enter the invite code you were given.
-4. Join the group and test normally.
+## 5. Suggested test checklist
 
-## 4. Suggested test checklist
-
-- Join the shared group
-- Trigger tracked events
-- Confirm recent group activity updates
-- Close and reopen RuneLite
-- Confirm history persists for the same invite code
+- Join the shared group from the second machine
+- Confirm `Show Group Members` works
+- Trigger tracked events on both machines
+- Confirm recent group activity updates on both machines
+- Leave the group and confirm the panel clears
+- Rejoin with the same group auth code
 
 ## Troubleshooting
 

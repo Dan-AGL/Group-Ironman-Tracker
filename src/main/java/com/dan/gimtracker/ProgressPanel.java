@@ -457,7 +457,7 @@ public class ProgressPanel extends PluginPanel
 		{
 			return String.valueOf(details.get("itemName"));
 		}
-		if ("BOSS_KC".equals(type))
+		if ("BOSS_KC".equals(type) || "BOSS_KC_SESSION".equals(type))
 		{
 			return String.valueOf(details.get("bossName"));
 		}
@@ -490,10 +490,10 @@ public class ProgressPanel extends PluginPanel
 				? "Drop worth " + formatCoins(details.get("value"))
 				: normalizedBossName + " drop worth " + formatCoins(details.get("value"));
 		}
-		if ("BOSS_KC".equals(type))
+		if ("BOSS_KC".equals(type) || "BOSS_KC_SESSION".equals(type))
 		{
 			String countType = String.valueOf(details.get("countType")).toLowerCase().replace('_', ' ');
-			return toTitleCase(countType);
+			return "BOSS_KC_SESSION".equals(type) ? toTitleCase(countType) + " session" : toTitleCase(countType);
 		}
 
 		return event.getSummary();
@@ -501,7 +501,7 @@ public class ProgressPanel extends PluginPanel
 
 	private String buildBadgeText(TrackedEvent event)
 	{
-		if ("BOSS_KC".equals(event.getType()))
+		if ("BOSS_KC".equals(event.getType()) || "BOSS_KC_SESSION".equals(event.getType()))
 		{
 			Object count = event.getDetails().get("count");
 			if (count instanceof Number)
@@ -562,6 +562,7 @@ public class ProgressPanel extends PluginPanel
 				fallbackColor = new Color(166, 142, 54);
 				break;
 			case "BOSS_KC":
+			case "BOSS_KC_SESSION":
 				resourceName = "Slayer_icon.png";
 				fallbackText = "KC";
 				fallbackColor = new Color(92, 117, 168);

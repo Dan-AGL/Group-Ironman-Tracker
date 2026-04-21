@@ -12,7 +12,8 @@ public interface GIMTrackerConfig extends Config
 		keyName = "groupCode",
 		name = "Group Auth Code",
 		description = "Shared group auth code used to join or re-authenticate a group",
-		secret = true
+		secret = true,
+		hidden = true
 	)
 	default String groupCode()
 	{
