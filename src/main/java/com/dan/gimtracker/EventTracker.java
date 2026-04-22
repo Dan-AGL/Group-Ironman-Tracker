@@ -25,6 +25,8 @@ public class EventTracker
 	private final Map<String, Integer> sessionBossCounts = new HashMap<>();
 	private final Set<String> completedCombatTasks = new HashSet<>();
 	private final Set<String> unlockedCollectionLogEntries = new HashSet<>();
+	private final Set<String> questsCompleted = new HashSet<>();
+	private final Set<String> completedAchievementDiaries = new HashSet<>();
 	private final List<TrackedEvent> pendingEvents = new ArrayList<>();
 	private final Deque<TrackedEvent> recentEvents = new ArrayDeque<>();
 	private String currentBossSessionId = Instant.now().toString();
@@ -53,6 +55,16 @@ public class EventTracker
 	public void resetCollectionLogBaseline()
 	{
 		unlockedCollectionLogEntries.clear();
+	}
+
+	public void resetQuestsCompleted()
+	{
+		questsCompleted.clear();
+	}
+
+	public void resetAchievementDiariesCompleted()
+	{
+		completedAchievementDiaries.clear();
 	}
 
 	// Converts a RuneLite stat change into one or more queued level-up events when the real level increases.
@@ -168,6 +180,36 @@ public class EventTracker
 		}
 
 		TrackedEvent trackedEvent = TrackedEvent.combatTaskComplete(playerName, normalizedTask, normalizedTier, sourceChannel);
+		queueEvent(trackedEvent);
+		return List.of(trackedEvent);
+	}
+	public List<TrackedEvent> captureQuestEvent(String playerName, String questName, String sourceChannel)
+	{
+		String key = playerName.trim() + "|" + questName.trim();
+		if(!questsCompleted.add(key)){
+			return List.of();
+		}
+		TrackedEvent trackedEvent = TrackedEvent.questCompleted(playerName, questName, sourceChannel);
+		queueEvent(trackedEvent);
+		return List.of(trackedEvent);
+	}
+
+	public List<TrackedEvent> captureAchievementDiaryEvent(String playerName, String regionName, String tier, String sourceChannel)
+	{
+		String normalizedRegion = regionName.trim();
+		String normalizedTier = tier.trim().toUpperCase();
+		String key = playerName.trim() + "|" + normalizedTier + "|" + normalizedRegion;
+		if (!completedAchievementDiaries.add(key))
+		{
+			return List.of();
+		}
+
+		TrackedEvent trackedEvent = TrackedEvent.achievementDiaryCompleted(
+			playerName,
+			normalizedRegion,
+			normalizedTier,
+			sourceChannel
+		);
 		queueEvent(trackedEvent);
 		return List.of(trackedEvent);
 	}

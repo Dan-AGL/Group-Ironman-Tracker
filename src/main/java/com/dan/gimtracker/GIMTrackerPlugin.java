@@ -88,6 +88,14 @@ public class GIMTrackerPlugin extends Plugin
 		"(.+?) received a new collection log item: (.+?) \\(([\\d,]+)/([\\d,]+)\\)\\.?$",
 		Pattern.CASE_INSENSITIVE
 	);
+	private static final Pattern QUEST_COMPLETION_MESSAGE = Pattern.compile(
+		"^(?:Congratulations,? )?(?:you've|you have) completed a quest: (.+?)\\.?$",
+		Pattern.CASE_INSENSITIVE
+	);
+	private static final Pattern ACHIEVEMENT_DIARY_MESSAGE = Pattern.compile(
+		"^(.+?) has completed the (easy|medium|hard|elite) (.+?) diary\\.?$",
+		Pattern.CASE_INSENSITIVE
+	);
 
 	@Inject
 	private Client client;
@@ -150,6 +158,8 @@ public class GIMTrackerPlugin extends Plugin
 			eventTracker.resetBossCountBaseline();
 			eventTracker.resetCombatTaskBaseline();
 			eventTracker.resetCollectionLogBaseline();
+			eventTracker.resetQuestsCompleted();
+			eventTracker.resetAchievementDiariesCompleted();
 		}
 	}
 
@@ -177,6 +187,8 @@ public class GIMTrackerPlugin extends Plugin
 				eventTracker.resetBossCountBaseline();
 				eventTracker.resetCombatTaskBaseline();
 				eventTracker.resetCollectionLogBaseline();
+				eventTracker.resetQuestsCompleted();
+				eventTracker.resetAchievementDiariesCompleted();
 			}
 			progressPanel.updateStatus("Tracking group activity");
 			refreshPanel();
@@ -239,8 +251,18 @@ public class GIMTrackerPlugin extends Plugin
 		{
 			return;
 		}
-
-		tryCaptureCollectionLogEvent(message, event.getType());
+		if (tryCaptureQuestEvent(message, event.getType()))
+		{
+			return;
+		}
+		if (tryCaptureAchievementDiaryEvent(message, event.getType()))
+		{
+			return;
+		}
+		if (tryCaptureCollectionLogEvent(message, event.getType()))
+		{
+			return;
+		}
 	}
 
 	private boolean tryCaptureBossCountEvent(String message)
@@ -419,6 +441,68 @@ public class GIMTrackerPlugin extends Plugin
 			refreshPanel();
 		}
 
+		return !newEvents.isEmpty();
+	}
+	private boolean tryCaptureQuestEvent(String message, ChatMessageType messageType)
+	{
+		Matcher matcher = QUEST_COMPLETION_MESSAGE.matcher(message);
+		if (!matcher.matches())
+		{
+			return false;
+		}
+
+		Player localPlayer = client.getLocalPlayer();
+		String playerName = localPlayer == null ? "Unknown" : localPlayer.getName();
+		if (playerName.isBlank())
+		{
+			return false;
+		}
+
+		String questName = matcher.group(1).trim();
+		List<TrackedEvent> newEvents = eventTracker.captureQuestEvent(
+			playerName,
+			questName,
+			messageType.name()
+		);
+		if (!newEvents.isEmpty())
+		{
+			log.debug("Captured {} quest completion events", newEvents.size());
+			progressPanel.updateStatus("Captured quest completion");
+			refreshPanel();
+		}
+		return !newEvents.isEmpty();
+	}
+
+	private boolean tryCaptureAchievementDiaryEvent(String message, ChatMessageType messageType)
+	{
+		Matcher matcher = ACHIEVEMENT_DIARY_MESSAGE.matcher(message);
+		if (!matcher.matches())
+		{
+			return false;
+		}
+
+		Player localPlayer = client.getLocalPlayer();
+		String localPlayerName = localPlayer == null ? "" : localPlayer.getName();
+		String playerName = matcher.group(1);
+		if (localPlayerName.isBlank() || !messageMatchesLocalPlayer(playerName, localPlayerName))
+		{
+			return false;
+		}
+
+		String tier = matcher.group(2).trim().toUpperCase(Locale.ENGLISH);
+		String regionName = matcher.group(3).trim();
+		List<TrackedEvent> newEvents = eventTracker.captureAchievementDiaryEvent(
+			localPlayerName,
+			regionName,
+			tier,
+			messageType.name()
+		);
+		if (!newEvents.isEmpty())
+		{
+			log.debug("Captured {} achievement diary events", newEvents.size());
+			progressPanel.updateStatus("Captured achievement diary completion");
+			refreshPanel();
+		}
 		return !newEvents.isEmpty();
 	}
 
@@ -1075,12 +1159,6 @@ public class GIMTrackerPlugin extends Plugin
 		String marker = " has completed ";
 		int markerIndex = message.toLowerCase(Locale.ENGLISH).indexOf(marker);
 		if (markerIndex <= 0)
-		{
-			return null;
-		}
-
-		String candidatePlayer = message.substring(0, markerIndex).trim();
-		if (!messageMatchesLocalPlayer(candidatePlayer, localPlayerName))
 		{
 			return null;
 		}

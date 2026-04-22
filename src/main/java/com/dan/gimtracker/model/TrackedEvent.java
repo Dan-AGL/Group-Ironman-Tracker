@@ -157,6 +157,39 @@ public class TrackedEvent
 			details
 		);
 	}
+	//Creates a quest event when a player completes a quest.
+	public static TrackedEvent questCompleted(String playerName, String questName, String sourceChannel){
+		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("eventId", UUID.randomUUID().toString());
+		details.put("playerName", playerName);
+		details.put("questName", questName);
+		details.put("sourceChannel", sourceChannel);
+		String summary = playerName + " completed quest: " + questName;
+		return new TrackedEvent(
+				"QUEST_COMPLETE",
+				Instant.now().toString(),
+				summary,
+				details
+		);
+	}
+
+	public static TrackedEvent achievementDiaryCompleted(String playerName, String regionName, String tier, String sourceChannel)
+	{
+		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("eventId", UUID.randomUUID().toString());
+		details.put("playerName", playerName);
+		details.put("regionName", regionName);
+		details.put("tier", tier);
+		details.put("sourceChannel", sourceChannel);
+		String summary = playerName + " completed " + tier + " " + regionName + " diary";
+
+		return new TrackedEvent(
+			"ACHIEVEMENT_DIARY_COMPLETE",
+			Instant.now().toString(),
+			summary,
+			details
+		);
+	}
 
 	// Returns the event category used by the backend and future filtering.
 	public String getType()

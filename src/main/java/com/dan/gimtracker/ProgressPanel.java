@@ -461,6 +461,14 @@ public class ProgressPanel extends PluginPanel
 		{
 			return String.valueOf(details.get("bossName"));
 		}
+		if ("QUEST_COMPLETE".equals(type))
+		{
+			return String.valueOf(details.get("questName"));
+		}
+		if ("ACHIEVEMENT_DIARY_COMPLETE".equals(type))
+		{
+			return String.valueOf(details.get("regionName"));
+		}
 
 		return event.getSummary();
 	}
@@ -494,6 +502,14 @@ public class ProgressPanel extends PluginPanel
 		{
 			String countType = String.valueOf(details.get("countType")).toLowerCase().replace('_', ' ');
 			return "BOSS_KC_SESSION".equals(type) ? toTitleCase(countType) + " session" : toTitleCase(countType);
+		}
+		if ("QUEST_COMPLETE".equals(type))
+		{
+			return "Completed " + details.get("questName");
+		}
+		if ("ACHIEVEMENT_DIARY_COMPLETE".equals(type))
+		{
+			return toTitleCase(String.valueOf(details.get("tier"))) + " achievement diary complete";
 		}
 
 		return event.getSummary();
@@ -565,6 +581,16 @@ public class ProgressPanel extends PluginPanel
 			case "BOSS_KC_SESSION":
 				resourceName = "Slayer_icon.png";
 				fallbackText = "KC";
+				fallbackColor = new Color(92, 117, 168);
+				break;
+			case "QUEST_COMPLETE":
+				resourceName = "Quest_icon.png";
+				fallbackText = "QC";
+				fallbackColor = new Color(92, 117, 168);
+				break;
+			case "ACHIEVEMENT_DIARY_COMPLETE":
+				resourceName = "Achievement_Diaries_icon.png";
+				fallbackText = "AD";
 				fallbackColor = new Color(92, 117, 168);
 				break;
 			default:
