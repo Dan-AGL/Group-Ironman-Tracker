@@ -109,10 +109,14 @@ public class GIMTrackerPlugin extends Plugin
 	@Inject
 	private ClientToolbar clientToolbar;
 
+	@Inject
+	private Gson gson;
+
+	@Inject
+	private SyncService syncService;
+
 	private final EventTracker eventTracker = new EventTracker();
-	private final SyncService syncService = new SyncService();
 	private final ExecutorService syncExecutor = Executors.newSingleThreadExecutor();
-	private final Gson gson = new Gson();
 
 	private ProgressPanel progressPanel;
 	private NavigationButton navigationButton;

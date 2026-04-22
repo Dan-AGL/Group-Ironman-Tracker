@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.lang.reflect.Type;
 import java.time.Instant;
 import java.util.List;
+import javax.inject.Inject;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -28,9 +29,16 @@ public class SyncService
 	private static final Type BACKEND_EVENT_LIST_TYPE = new TypeToken<List<BackendEventResponse>>() { }.getType();
 	private static final Type GROUP_MEMBER_LIST_TYPE = new TypeToken<List<GroupMemberResponse>>() { }.getType();
 
-	private final OkHttpClient httpClient = new OkHttpClient();
-	private final Gson gson = new Gson();
+	private final OkHttpClient httpClient;
+	private final Gson gson;
 	private Instant lastSuccessfulSync;
+
+	@Inject
+	public SyncService(OkHttpClient httpClient, Gson gson)
+	{
+		this.httpClient = httpClient;
+		this.gson = gson;
+	}
 
 	public boolean sendEvents(String apiBaseUrl, String sessionToken, ProgressUploadRequest request) throws IOException
 	{
