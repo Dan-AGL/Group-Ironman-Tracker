@@ -7,6 +7,7 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.FontMetrics;
 import java.awt.Graphics2D;
 import java.awt.GridLayout;
 import java.awt.Image;
@@ -15,6 +16,7 @@ import java.awt.datatransfer.StringSelection;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -48,7 +50,9 @@ public class ProgressPanel extends PluginPanel
 	private static final Color BADGE_TEXT = new Color(245, 247, 250);
 	private static final Color ACTION_BACKGROUND = new Color(58, 66, 79);
 	private static final int CARD_ICON_SIZE = 26;
-	private static final int CARD_HEIGHT = 58;
+	private static final int CARD_MIN_HEIGHT = 58;
+	private static final int CARD_TEXT_WIDTH = 142;
+	private static final int CARD_TEXT_WIDTH_WITH_BADGE = 112;
 
 	private final JLabel groupNameValue = new JLabel("Not linked");
 	private final JPanel recentEventsContainer = new JPanel();
@@ -374,9 +378,6 @@ public class ProgressPanel extends PluginPanel
 			BorderFactory.createLineBorder(CARD_BORDER),
 			BorderFactory.createEmptyBorder(5, 8, 5, 8)
 		));
-		card.setPreferredSize(new Dimension(0, CARD_HEIGHT));
-		card.setMinimumSize(new Dimension(0, CARD_HEIGHT));
-		card.setMaximumSize(new Dimension(Integer.MAX_VALUE, CARD_HEIGHT));
 		card.setAlignmentX(Component.LEFT_ALIGNMENT);
 
 		JLabel iconLabel = new JLabel(resolveIcon(event));
@@ -387,28 +388,24 @@ public class ProgressPanel extends PluginPanel
 		textPanel.setLayout(new BoxLayout(textPanel, BoxLayout.Y_AXIS));
 		textPanel.setBackground(CARD_BACKGROUND);
 
-		JLabel titleLabel = new JLabel(asHtml(buildTitle(event)));
-		titleLabel.setForeground(TITLE_COLOR);
-		titleLabel.setFont(titleLabel.getFont().deriveFont(Font.BOLD, 12f));
+		String badgeText = buildBadgeText(event);
+		int textWidth = badgeText == null ? CARD_TEXT_WIDTH : CARD_TEXT_WIDTH_WITH_BADGE;
+
+		JLabel titleLabel = createWrappedLabel(buildTitle(event), TITLE_COLOR, Font.BOLD, 12f, textWidth);
 		textPanel.add(titleLabel);
 
-		JLabel subtitleLabel = new JLabel(asHtml(buildSubtitle(event)));
-		subtitleLabel.setForeground(BODY_COLOR);
-		subtitleLabel.setFont(subtitleLabel.getFont().deriveFont(Font.PLAIN, 11f));
+		JLabel subtitleLabel = createWrappedLabel(buildSubtitle(event), BODY_COLOR, Font.PLAIN, 11f, textWidth);
 		textPanel.add(subtitleLabel);
 
 		String metaText = buildMetaText(event);
 		if (metaText != null)
 		{
-			JLabel metaLabel = new JLabel(asHtml(metaText));
-			metaLabel.setForeground(META_COLOR);
-			metaLabel.setFont(metaLabel.getFont().deriveFont(Font.PLAIN, 9f));
+			JLabel metaLabel = createWrappedLabel(metaText, META_COLOR, Font.PLAIN, 9f, textWidth);
 			textPanel.add(metaLabel);
 		}
 
 		card.add(textPanel, BorderLayout.CENTER);
 
-		String badgeText = buildBadgeText(event);
 		if (badgeText != null)
 		{
 			JPanel badgeWrapper = new JPanel();
@@ -434,7 +431,21 @@ public class ProgressPanel extends PluginPanel
 			card.add(badgeWrapper, BorderLayout.EAST);
 		}
 
+		int cardHeight = Math.max(CARD_MIN_HEIGHT, textPanel.getPreferredSize().height + 12);
+		card.setPreferredSize(new Dimension(0, cardHeight));
+		card.setMinimumSize(new Dimension(0, cardHeight));
+		card.setMaximumSize(new Dimension(Integer.MAX_VALUE, cardHeight));
+
 		return card;
+	}
+
+	private JLabel createWrappedLabel(String text, Color color, int fontStyle, float fontSize, int textWidth)
+	{
+		JLabel label = new JLabel();
+		label.setForeground(color);
+		label.setFont(label.getFont().deriveFont(fontStyle, fontSize));
+		label.setText(asHtml(wrapText(text, label.getFontMetrics(label.getFont()), textWidth)));
+		return label;
 	}
 
 	private String buildTitle(TrackedEvent event)
@@ -682,9 +693,108 @@ public class ProgressPanel extends PluginPanel
 		return builder.toString();
 	}
 
-	private String asHtml(String text)
+	private String escapeHtml(String text)
 	{
-		return "<html><body style='width:128px'>" + text + "</body></html>";
+		if (text == null)
+		{
+			return "";
+		}
+
+		return text
+			.replace("&", "&amp;")
+			.replace("<", "&lt;")
+			.replace(">", "&gt;")
+			.replace("\"", "&quot;")
+			.replace("'", "&#39;");
+	}
+
+	private List<String> wrapText(String text, FontMetrics fontMetrics, int maxWidth)
+	{
+		String normalizedText = text == null ? "" : text.trim().replaceAll("\\s+", " ");
+		if (normalizedText.isEmpty())
+		{
+			return List.of("");
+		}
+
+		List<String> lines = new ArrayList<>();
+		String currentLine = "";
+		for (String word : normalizedText.split(" "))
+		{
+			if (fontMetrics.stringWidth(word) > maxWidth)
+			{
+				if (!currentLine.isEmpty())
+				{
+					lines.add(currentLine);
+					currentLine = "";
+				}
+
+				List<String> chunks = splitLongWord(word, fontMetrics, maxWidth);
+				for (int index = 0; index < chunks.size() - 1; index++)
+				{
+					lines.add(chunks.get(index));
+				}
+				currentLine = chunks.get(chunks.size() - 1);
+				continue;
+			}
+
+			String candidate = currentLine.isEmpty() ? word : currentLine + " " + word;
+			if (fontMetrics.stringWidth(candidate) <= maxWidth)
+			{
+				currentLine = candidate;
+				continue;
+			}
+
+			lines.add(currentLine);
+			currentLine = word;
+		}
+
+		if (!currentLine.isEmpty())
+		{
+			lines.add(currentLine);
+		}
+
+		return lines;
+	}
+
+	private List<String> splitLongWord(String word, FontMetrics fontMetrics, int maxWidth)
+	{
+		List<String> chunks = new ArrayList<>();
+		StringBuilder chunk = new StringBuilder();
+		for (int index = 0; index < word.length(); index++)
+		{
+			char character = word.charAt(index);
+			String candidate = chunk.toString() + character;
+			if (chunk.length() > 0 && fontMetrics.stringWidth(candidate) > maxWidth)
+			{
+				chunks.add(chunk.toString());
+				chunk.setLength(0);
+			}
+
+			chunk.append(character);
+		}
+
+		if (chunk.length() > 0)
+		{
+			chunks.add(chunk.toString());
+		}
+
+		return chunks;
+	}
+
+	private String asHtml(List<String> lines)
+	{
+		StringBuilder builder = new StringBuilder("<html><body>");
+		for (int index = 0; index < lines.size(); index++)
+		{
+			if (index > 0)
+			{
+				builder.append("<br>");
+			}
+
+			builder.append(escapeHtml(lines.get(index)));
+		}
+		builder.append("</body></html>");
+		return builder.toString();
 	}
 
 	public static class GroupMemberView

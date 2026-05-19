@@ -27,11 +27,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.inject.Inject;
 import net.runelite.api.ChatMessageType;
@@ -63,39 +62,6 @@ public class GIMTrackerPlugin extends Plugin
 	private static final int MAX_GROUP_NAME_LENGTH = 25;
 	private static final int MAX_DISPLAY_EVENTS = 20;
 	private static final Duration SYNC_INTERVAL = Duration.ofSeconds(15);
-	private static final Pattern BOSS_COUNT_MESSAGE = Pattern.compile(
-		"Your (.+?) (kill count|completion count) is:? ([\\d,]+)\\.?$"
-	);
-	private static final Pattern BOSS_DROP_MESSAGE = Pattern.compile(
-		"(?:.+? received a drop: |Drop: )(.+?) \\(([\\d,]+) coins\\) from (.+?)\\.?$"
-	);
-	private static final Pattern NAMED_BOSS_DROP_MESSAGE = Pattern.compile(
-		"(.+?) received a drop: (.+?) \\(([\\d,]+) coins\\) from (.+?)\\.?$"
-	);
-	private static final Pattern COMBAT_TASK_MESSAGE = Pattern.compile(
-		"(?:Congratulations,? )?(?:you've|you have) completed (?:a |the )?(?:(easy|medium|hard|elite|master|grandmaster) combat task|combat achievement task):? (.+?)(?: \\((\\d+) points?\\))?\\.?$",
-		Pattern.CASE_INSENSITIVE
-	);
-	private static final Pattern COMBAT_TASK_QUOTED_MESSAGE = Pattern.compile(
-		"Congratulations!? (?:you've|you have) completed (?:an? )?(easy|medium|hard|elite|master|grandmaster) combat achievement '?(.+?)'?(?: \\((\\d+) points?\\))?\\.?$",
-		Pattern.CASE_INSENSITIVE
-	);
-	private static final Pattern NAMED_COMBAT_TASK_MESSAGE = Pattern.compile(
-		"(.+?) has completed (?:an? |the )?(?:(easy|medium|hard|elite|master|grandmaster) )?combat (?:task|achievement task):? (.+?)\\.?$",
-		Pattern.CASE_INSENSITIVE
-	);
-	private static final Pattern COLLECTION_LOG_MESSAGE = Pattern.compile(
-		"(.+?) received a new collection log item: (.+?) \\(([\\d,]+)/([\\d,]+)\\)\\.?$",
-		Pattern.CASE_INSENSITIVE
-	);
-	private static final Pattern QUEST_COMPLETION_MESSAGE = Pattern.compile(
-		"^(?:Congratulations,? )?(?:you've|you have) completed a quest: (.+?)\\.?$",
-		Pattern.CASE_INSENSITIVE
-	);
-	private static final Pattern ACHIEVEMENT_DIARY_MESSAGE = Pattern.compile(
-		"^(.+?) has completed the (easy|medium|hard|elite) (.+?) diary\\.?$",
-		Pattern.CASE_INSENSITIVE
-	);
 
 	@Inject
 	private Client client;
@@ -224,7 +190,11 @@ public class GIMTrackerPlugin extends Plugin
 			return;
 		}
 
-		List<TrackedEvent> newEvents = eventTracker.captureLevelUpEvents(client, event);
+		List<TrackedEvent> newEvents = eventTracker.captureLevelUpEvents(
+			client,
+			event,
+			config.levelUpThreshold()
+		);
 		if (!newEvents.isEmpty())
 		{
 			log.debug("Captured {} new tracked events", newEvents.size());
@@ -271,29 +241,27 @@ public class GIMTrackerPlugin extends Plugin
 
 	private boolean tryCaptureBossCountEvent(String message)
 	{
-		Matcher matcher = BOSS_COUNT_MESSAGE.matcher(message);
-		if (!matcher.matches())
+		Optional<ChatTriggerParser.BossKillCountTrigger> parsedTrigger = ChatTriggerParser.parseBossKillCount(message);
+		if (parsedTrigger.isEmpty())
 		{
 			return false;
 		}
 
-		String bossName = matcher.group(1);
-		String countType = matcher.group(2).equals("completion count") ? "COMPLETION_COUNT" : "KILL_COUNT";
-		int count = Integer.parseInt(matcher.group(3).replace(",", ""));
+		ChatTriggerParser.BossKillCountTrigger trigger = parsedTrigger.get();
 		Player localPlayer = client.getLocalPlayer();
 		String playerName = localPlayer == null ? "Unknown" : localPlayer.getName();
 		List<TrackedEvent> newEvents = eventTracker.captureBossKillCountEvent(
 			playerName,
-			bossName,
-			countType,
-			count,
+			trigger.getBossName(),
+			trigger.getCountType(),
+			trigger.getCount(),
 			config.bossKillCountThreshold()
 		);
 
 		if (!newEvents.isEmpty())
 		{
 			log.debug("Captured {} boss KC events", newEvents.size());
-			progressPanel.updateStatus("Captured boss KC for " + bossName);
+			progressPanel.updateStatus("Captured boss KC for " + trigger.getBossName());
 			refreshPanel();
 		}
 
@@ -304,38 +272,17 @@ public class GIMTrackerPlugin extends Plugin
 	{
 		Player localPlayer = client.getLocalPlayer();
 		String playerName = localPlayer == null ? "Unknown" : localPlayer.getName();
-		String itemName;
-		long value = 0L;
-		String bossName = "";
-		if (message.startsWith("Drop: "))
+		Optional<ChatTriggerParser.BossDropTrigger> parsedTrigger = ChatTriggerParser.parseBossDrop(message, playerName);
+		if (parsedTrigger.isEmpty())
 		{
-			Matcher matcher = BOSS_DROP_MESSAGE.matcher(message);
-			if (!matcher.matches())
-			{
-				return false;
-			}
-
-			itemName = matcher.group(1);
-			value = Long.parseLong(matcher.group(2).replace(",", ""));
-			bossName = matcher.group(3);
-		}
-		else
-		{
-			Matcher namedMatcher = NAMED_BOSS_DROP_MESSAGE.matcher(message);
-			if (!namedMatcher.matches() || !messageMatchesLocalPlayer(namedMatcher.group(1), playerName))
-			{
-				return false;
-			}
-
-			itemName = namedMatcher.group(2);
-			value = Long.parseLong(namedMatcher.group(3).replace(",", ""));
-			bossName = namedMatcher.group(4);
+			return false;
 		}
 
+		ChatTriggerParser.BossDropTrigger trigger = parsedTrigger.get();
 		List<TrackedEvent> newEvents = eventTracker.captureBossDropEvent(
-			bossName,
-			itemName,
-			value,
+			trigger.getBossName(),
+			trigger.getItemName(),
+			trigger.getValue(),
 			playerName,
 			messageType.name(),
 			config.dropValueThreshold()
@@ -344,7 +291,7 @@ public class GIMTrackerPlugin extends Plugin
 		if (!newEvents.isEmpty())
 		{
 			log.debug("Captured {} boss drop events", newEvents.size());
-			progressPanel.updateStatus(bossName.isBlank() ? "Captured drop" : "Captured drop from " + bossName);
+			progressPanel.updateStatus(trigger.getBossName().isBlank() ? "Captured drop" : "Captured drop from " + trigger.getBossName());
 			refreshPanel();
 		}
 
@@ -353,51 +300,24 @@ public class GIMTrackerPlugin extends Plugin
 
 	private boolean tryCaptureCombatTaskEvent(String message, ChatMessageType messageType)
 	{
-		String taskName;
-		String tier;
+		if (!config.toggleCombatTaskEvents())
+		{
+			return false;
+		}
+
 		Player localPlayer = client.getLocalPlayer();
 		String playerName = localPlayer == null ? "Unknown" : localPlayer.getName();
-
-		Matcher directMatcher = COMBAT_TASK_MESSAGE.matcher(message);
-		if (directMatcher.matches())
+		Optional<ChatTriggerParser.CombatTaskTrigger> parsedTrigger = ChatTriggerParser.parseCombatTask(message, playerName);
+		if (parsedTrigger.isEmpty())
 		{
-			tier = directMatcher.group(1) == null ? "" : directMatcher.group(1).toUpperCase();
-			taskName = directMatcher.group(2);
-		}
-		else
-		{
-			Matcher quotedMatcher = COMBAT_TASK_QUOTED_MESSAGE.matcher(message);
-			if (quotedMatcher.matches())
-			{
-				tier = quotedMatcher.group(1).toUpperCase();
-				taskName = quotedMatcher.group(2);
-			}
-			else
-			{
-				Matcher namedMatcher = NAMED_COMBAT_TASK_MESSAGE.matcher(message);
-				if (namedMatcher.matches() && messageMatchesLocalPlayer(namedMatcher.group(1), playerName))
-				{
-					tier = namedMatcher.group(2) == null ? "" : namedMatcher.group(2).toUpperCase();
-					taskName = namedMatcher.group(3);
-				}
-				else
-				{
-					NamedCombatTask namedTask = parseNamedCombatTaskBroadcast(message, playerName);
-					if (namedTask == null)
-					{
-						return false;
-					}
-
-					tier = namedTask.tier;
-					taskName = namedTask.taskName;
-				}
-			}
+			return false;
 		}
 
+		ChatTriggerParser.CombatTaskTrigger trigger = parsedTrigger.get();
 		List<TrackedEvent> newEvents = eventTracker.captureCombatTaskEvent(
 			playerName,
-			taskName,
-			tier,
+			trigger.getTaskName(),
+			trigger.getTier(),
 			messageType.name()
 		);
 
@@ -413,28 +333,25 @@ public class GIMTrackerPlugin extends Plugin
 
 	private boolean tryCaptureCollectionLogEvent(String message, ChatMessageType messageType)
 	{
-		Matcher matcher = COLLECTION_LOG_MESSAGE.matcher(message);
-		if (!matcher.matches())
+		if (!config.toggleCollectionLogEvents())
 		{
 			return false;
 		}
 
 		Player localPlayer = client.getLocalPlayer();
 		String localPlayerName = localPlayer == null ? "" : localPlayer.getName();
-		String playerName = matcher.group(1);
-		if (localPlayerName.isBlank() || !messageMatchesLocalPlayer(playerName, localPlayerName))
+		Optional<ChatTriggerParser.CollectionLogTrigger> parsedTrigger = ChatTriggerParser.parseCollectionLog(message, localPlayerName);
+		if (parsedTrigger.isEmpty())
 		{
 			return false;
 		}
 
-		String itemName = matcher.group(2);
-		int unlockedCount = Integer.parseInt(matcher.group(3).replace(",", ""));
-		int totalCount = Integer.parseInt(matcher.group(4).replace(",", ""));
+		ChatTriggerParser.CollectionLogTrigger trigger = parsedTrigger.get();
 		List<TrackedEvent> newEvents = eventTracker.captureCollectionLogEvent(
-			playerName,
-			itemName,
-			unlockedCount,
-			totalCount,
+			trigger.getPlayerName(),
+			trigger.getItemName(),
+			trigger.getUnlockedCount(),
+			trigger.getTotalCount(),
 			messageType.name()
 		);
 
@@ -449,8 +366,13 @@ public class GIMTrackerPlugin extends Plugin
 	}
 	private boolean tryCaptureQuestEvent(String message, ChatMessageType messageType)
 	{
-		Matcher matcher = QUEST_COMPLETION_MESSAGE.matcher(message);
-		if (!matcher.matches())
+		if (!config.toggleQuestEvents())
+		{
+			return false;
+		}
+
+		Optional<ChatTriggerParser.QuestTrigger> parsedTrigger = ChatTriggerParser.parseQuest(message);
+		if (parsedTrigger.isEmpty())
 		{
 			return false;
 		}
@@ -462,10 +384,10 @@ public class GIMTrackerPlugin extends Plugin
 			return false;
 		}
 
-		String questName = matcher.group(1).trim();
+		ChatTriggerParser.QuestTrigger trigger = parsedTrigger.get();
 		List<TrackedEvent> newEvents = eventTracker.captureQuestEvent(
 			playerName,
-			questName,
+			trigger.getQuestName(),
 			messageType.name()
 		);
 		if (!newEvents.isEmpty())
@@ -479,26 +401,24 @@ public class GIMTrackerPlugin extends Plugin
 
 	private boolean tryCaptureAchievementDiaryEvent(String message, ChatMessageType messageType)
 	{
-		Matcher matcher = ACHIEVEMENT_DIARY_MESSAGE.matcher(message);
-		if (!matcher.matches())
+		if (!config.toggleAchievementDiaryEvents())
 		{
 			return false;
 		}
 
 		Player localPlayer = client.getLocalPlayer();
 		String localPlayerName = localPlayer == null ? "" : localPlayer.getName();
-		String playerName = matcher.group(1);
-		if (localPlayerName.isBlank() || !messageMatchesLocalPlayer(playerName, localPlayerName))
+		Optional<ChatTriggerParser.AchievementDiaryTrigger> parsedTrigger = ChatTriggerParser.parseAchievementDiary(message, localPlayerName);
+		if (parsedTrigger.isEmpty())
 		{
 			return false;
 		}
 
-		String tier = matcher.group(2).trim().toUpperCase(Locale.ENGLISH);
-		String regionName = matcher.group(3).trim();
+		ChatTriggerParser.AchievementDiaryTrigger trigger = parsedTrigger.get();
 		List<TrackedEvent> newEvents = eventTracker.captureAchievementDiaryEvent(
 			localPlayerName,
-			regionName,
-			tier,
+			trigger.getRegionName(),
+			trigger.getTier(),
 			messageType.name()
 		);
 		if (!newEvents.isEmpty())
@@ -1129,25 +1049,6 @@ public class GIMTrackerPlugin extends Plugin
 		return playerName.trim().toLowerCase(Locale.ENGLISH);
 	}
 
-	private boolean messageMatchesLocalPlayer(String message, String localPlayerName)
-	{
-		if (message == null || localPlayerName == null || localPlayerName.isBlank())
-		{
-			return false;
-		}
-
-		String candidate = message;
-		int closingBracketIndex = candidate.lastIndexOf(']');
-		if (closingBracketIndex >= 0 && closingBracketIndex + 1 < candidate.length())
-		{
-			candidate = candidate.substring(closingBracketIndex + 1).trim();
-		}
-
-		candidate = candidate.replaceFirst("^(?:[A-Z_]+:\\d+\\|)+", "").trim();
-
-		return normalizePlayerIdentifier(candidate).equals(normalizePlayerIdentifier(localPlayerName));
-	}
-
 	private String normalizePlayerIdentifier(String playerName)
 	{
 		if (playerName == null)
@@ -1156,61 +1057,6 @@ public class GIMTrackerPlugin extends Plugin
 		}
 
 		return playerName.toLowerCase(Locale.ENGLISH).replaceAll("[^a-z0-9]", "");
-	}
-
-	private NamedCombatTask parseNamedCombatTaskBroadcast(String message, String localPlayerName)
-	{
-		String marker = " has completed ";
-		int markerIndex = message.toLowerCase(Locale.ENGLISH).indexOf(marker);
-		if (markerIndex <= 0)
-		{
-			return null;
-		}
-
-		String remainder = message.substring(markerIndex + marker.length()).trim();
-		if (remainder.endsWith("."))
-		{
-			remainder = remainder.substring(0, remainder.length() - 1).trim();
-		}
-
-		String lowerRemainder = remainder.toLowerCase(Locale.ENGLISH);
-		String[] tiers = {"easy", "medium", "hard", "elite", "master", "grandmaster"};
-		for (String supportedTier : tiers)
-		{
-			String[] prefixes = {
-				"a " + supportedTier + " combat task: ",
-				"an " + supportedTier + " combat task: ",
-				"the " + supportedTier + " combat task: ",
-				supportedTier + " combat task: "
-			};
-			for (String prefix : prefixes)
-			{
-				if (!lowerRemainder.startsWith(prefix))
-				{
-					continue;
-				}
-
-				String taskName = remainder.substring(prefix.length()).trim();
-				if (!taskName.isBlank())
-				{
-					return new NamedCombatTask(supportedTier.toUpperCase(Locale.ENGLISH), taskName);
-				}
-			}
-		}
-
-		return null;
-	}
-
-	private static final class NamedCombatTask
-	{
-		private final String tier;
-		private final String taskName;
-
-		private NamedCombatTask(String tier, String taskName)
-		{
-			this.tier = tier;
-			this.taskName = taskName;
-		}
 	}
 
 	private String eventKey(TrackedEvent event)

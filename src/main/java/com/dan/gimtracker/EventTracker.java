@@ -68,7 +68,7 @@ public class EventTracker
 	}
 
 	// Converts a RuneLite stat change into one or more queued level-up events when the real level increases.
-	public List<TrackedEvent> captureLevelUpEvents(Client client, StatChanged event)
+	public List<TrackedEvent> captureLevelUpEvents(Client client, StatChanged event, int threshold)
 	{
 		Skill skill = event.getSkill();
 		if (skill == Skill.OVERALL)
@@ -85,6 +85,11 @@ public class EventTracker
 		}
 
 		if (currentLevel <= previousLevel)
+		{
+			return List.of();
+		}
+
+		if (currentLevel < threshold)
 		{
 			return List.of();
 		}
@@ -324,6 +329,11 @@ public class EventTracker
 		}
 
 		pendingEvents.add(trackedEvent);
+		addRecentEvent(trackedEvent);
+	}
+
+	private void addRecentEvent(TrackedEvent trackedEvent)
+	{
 		recentEvents.addFirst(trackedEvent);
 		while (recentEvents.size() > MAX_RECENT_EVENTS)
 		{

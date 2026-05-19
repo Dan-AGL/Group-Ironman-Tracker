@@ -63,7 +63,7 @@ That allows:
 
 ## Owner
 
-Developed and maintained by Danj.
+Developed and maintained by Danj-Dev.
 Any plugin ideas you'd like me to develop ? Get ahold of me through Github
 
 ## Bug Reports

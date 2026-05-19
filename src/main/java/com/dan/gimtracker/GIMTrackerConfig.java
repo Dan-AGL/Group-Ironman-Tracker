@@ -51,6 +51,56 @@ public interface GIMTrackerConfig extends Config
 	)
 	default int dropValueThreshold()
 	{
-		return 2000;
+		return 50000;
 	}
+	// Sets minimum level up event triggers
+	@ConfigItem(
+			keyName = "levelUpThreshold",
+			name = "Level Up Threshold",
+			description = "Only queue level up events after this threshold"
+	)
+	default int levelUpThreshold()
+	{
+		return 50;
+	}
+	@ConfigItem(
+			keyName = "toggleCollectionLogEvents",
+			name = "Enable Collection Log Events",
+			description = "Toggle on/off collection log events"
+	)
+	default boolean toggleCollectionLogEvents()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+			keyName = "toggleQuestEvents",
+			name = "Enable Quest Events",
+			description = "Toggle on/off quest events"
+	)
+	default boolean toggleQuestEvents()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+			keyName = "toggleCombatTaskEvents",
+			name = "Enable Combat Task Events",
+			description = "Toggle on/off combat task events"
+	)
+	default boolean toggleCombatTaskEvents()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+			keyName = "toggleAchievementDiaryEvents",
+			name = "Enable Achievement Diary Events",
+			description = "Toggle on/off achievement diary events"
+	)
+	default boolean toggleAchievementDiaryEvents()
+	{
+		return true;
+	}
+
 }
